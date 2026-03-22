@@ -115,15 +115,15 @@ def chay_robot():
         except Exception:
             driver.execute_script("document.forms[0].submit()")
         
-        log.info("Đang chờ 15 giây để đăng nhập hoàn tất...")
-        time.sleep(15)
+        log.info("Đang chờ 20 giây để đăng nhập hoàn tất...")
+        time.sleep(20)
 
         # 3. TRUY CẬP DANH SÁCH
         log.info("3. Truy cập danh sách văn bản...")
         driver.get(URL_DANH_SACH)
         
-        log.info("Đang ngủ đông 30 giây để trang web tải hết các Khung (Frame)...")
-        time.sleep(30) # <<< Ép buộc dừng 30 giây để máy chủ Sở kịp tải
+        log.info("Đang ngủ đông 40 giây để trang web tải hết các Khung (Frame)...")
+        time.sleep(40) # <<< Ép buộc dừng 40 giây để máy chủ kịp tải
 
         driver.switch_to.default_content()
 
@@ -134,29 +134,14 @@ def chay_robot():
             log.info("✅ Đã nhảy vào Frame 'Main' thành công!")
             khung_chinh_thanh_cong = True
         except Exception:
-            log.warning("Chưa bám được vào Frame 'Main', thử quét dạo tìm Iframe...")
-
-        # Dự phòng: Tự động lùng sục tất cả các Iframe nếu bám trực tiếp thất bại
-        if not khung_chinh_thanh_cong:
-            frames = driver.find_elements(By.XPATH, "//frame | //iframe")
-            log.info(f"Dò tìm thấy {len(frames)} khung lồng ghép trên trang.")
-            
-            for i, f in enumerate(frames):
-                try:
-                    driver.switch_to.default_content()
-                    driver.switch_to.frame(f)
-                    
-                    rows_check = driver.find_elements(By.TAG_NAME, "tr")
-                    if len(rows_check) > 5:
-                        log.info(f"✅ Phát hiện khung thứ {i+1} có chứa dữ liệu văn bản!")
-                        khung_chinh_thanh_cong = True
-                        break
-                except Exception:
-                    continue
+            log.warning("Chưa bám được vào Frame 'Main', thử chụp ảnh màn hình để gỡ lỗi...")
+            # TỰ ĐỘNG CHỤP ẢNH MÀN HÌNH LỖI ĐỂ KIỂM TRA
+            driver.save_screenshot("screenshot_loi_frame.png")
+            log.info("📸 Đã chụp ảnh màn hình lỗi (screenshot_loi_frame.png)!")
 
         if not khung_chinh_thanh_cong:
             log.error("❌ Không thể bám trụ vào bất kỳ Khung làm việc nào. Hủy phiên quét!")
-            gui_telegram("⚠️ <b>Robot lỗi:</b> Kẹt ở lớp giao diện chính (Không tìm thấy Frame bảng).")
+            gui_telegram("⚠️ <b>Robot lỗi:</b> Kẹt ở lớp giao diện chính (Không tìm thấy Frame Main).")
             return
 
         # 4. PHÂN TÍCH BẢNG DỮ LIỆU
@@ -185,7 +170,7 @@ def chay_robot():
             thoi_gian = datetime.now().strftime("%H:%M %d/%m/%Y")
             noi_dung  = "\n---\n".join(ds_vb_moi[:5])
             msg = (
-                f"🚀 <b>SỞ KH&CN: CÓ {so_luong} VĂN BẢN ĐẾM MỚI</b>\n"
+                f"🚀 <b>SỞ KH&CN: CÓ {so_luong} VĂN BẢN ĐẾN MỚI</b>\n"
                 f"⏰ Cập nhật: {thoi_gian}\n\n"
                 f"{noi_dung}"
             )
