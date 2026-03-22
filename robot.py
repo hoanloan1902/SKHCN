@@ -1,6 +1,5 @@
 import time
 import os
-import json
 import logging
 import requests
 from datetime import datetime
@@ -12,6 +11,9 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
+# ============================================================
+# 1. CẤU HÌNH — Đọc từ GitHub Secrets
+# ============================================================
 URL_LOGIN     = "https://hscvkhcn.dienbien.gov.vn/names.nsf?Login"
 URL_DANH_SACH = "https://hscvkhcn.dienbien.gov.vn/qlvb/vbden.nsf/default?openform&frm=Private_ChoXL?openForm"
 
@@ -21,7 +23,7 @@ TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 # ============================================================
-# LOGGING
+# 2. LOGGING
 # ============================================================
 logging.basicConfig(
     level=logging.INFO,
@@ -29,6 +31,7 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 log = logging.getLogger(__name__)
+
 
 def gui_telegram(msg: str) -> bool:
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
@@ -43,6 +46,7 @@ def gui_telegram(msg: str) -> bool:
         return resp.status_code == 200
     except Exception:
         return False
+
 
 def chay_robot():
     log.info("--- BẮT ĐẦU QUÉT HỆ THỐNG SỞ KH&CN ---")
@@ -88,25 +92,25 @@ def chay_robot():
             if len(tds) >= 8:
                 txt = row.text.strip()
                 if "/" in txt and "Số ký hiệu" not in txt:
-                    # Chỉnh sửa cột lấy Trích yếu chuẩn hơn
-                    so_kh = tds[3].text.strip()
-                    trich_yeu = tds[5].text.strip()
+                    # Chỉnh dịch tọa độ cột chính xác để lấy trích yếu
+                    so_kh = tds[4].text.strip()
+                    trich_yeu = tds[6].text.strip()
                     
-                    if "/" not in so_kh and "/" in tds[4].text:
-                        so_kh = tds[4].text.strip()
-                        trich_yeu = tds[6].text.strip()
+                    if "/" not in so_kh and "/" in tds[3].text:
+                        so_kh = tds[3].text.strip()
+                        trich_yeu = tds[5].text.strip()
 
                     if so_kh:
                         ds_vb_moi.append(f"📍 Số: <b>{so_kh}</b>\n📝 Trích yếu: {trich_yeu}")
 
         if ds_vb_moi:
-            # Lấy 10 cái mới nhất đẩy ra test cho gọn
+            # Lấy 10 cái để test thôi cho đỡ lụt tin nhắn
             noi_dung = "\n---\n".join(ds_vb_moi[:10]) 
-            msg = f"🚀 <b>TEST LẠI TOÀN BỘ VĂN BẢN (KHÔNG CHỐNG TRÙNG)</b>\n\n{noi_dung}"
+            msg = f"🚀 <b>TEST LẤY TRÍCH YẾU CHUẨN (ÉP BUỘC GỬI)</b>\n\n{noi_dung}"
             gui_telegram(msg)
-            log.info("🔥 Đã đẩy tin nhắn Test thành công!")
+            log.info("🔥 Đã đẩy tin nhắn bắn lính thành công!")
         else:
-            log.info("Bảng rỗng")
+            log.info("Không bóc được dữ liệu.")
 
     except Exception as e:
         log.error(f"❌ Lỗi: {e}")
