@@ -145,7 +145,7 @@ def chay_robot():
         log.info(f"📋 Tìm thấy tổng cộng {len(ds_van_ban_can_quet)} văn bản mới. Bắt đầu quét chi tiết...")
 
         # 🚀 Bước 3: Quét chi tiết từng văn bản (Giới hạn tối đa 15 cái 1 lần chạy để tránh treo GitHub)
-        for vb in ds_van_ban_can_quet[:15]:
+        for vb in ds_van_ban_can_quet[:20]:
             try:
                 driver.get(vb["link"])
                 time.sleep(5) # Mở thẳng link nên tải siêu nhanh, chỉ mất 5 giây!
