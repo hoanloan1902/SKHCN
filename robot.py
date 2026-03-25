@@ -3,6 +3,7 @@ import os
 import json
 import logging
 import requests
+import re
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -24,7 +25,6 @@ TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 FILE_DA_GUI = "da_gui.json"
-
 
 # ============================================================
 # 2. LOGGING
@@ -63,6 +63,13 @@ def gui_telegram(msg: str) -> bool:
         return resp.status_code == 200
     except Exception:
         return False
+
+# Hàm nhận diện Số ký hiệu chuẩn (chứa dấu /)
+def la_so_hieu_chuan(text: str) -> bool:
+    if not text: return False
+    if re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', text): return False # Loại trừ ngày tháng
+    if "/" in text and len(text) >= 4: return True
+    return False
 
 
 def chay_robot():
@@ -106,35 +113,45 @@ def chay_robot():
 
         for row in rows:
             tds = row.find_elements(By.TAG_NAME, "td")
-            if len(tds) < 8: continue
+            if len(tds) < 5: continue
 
-            txt_row = row.text.strip()
-            if "số ký hiệu" in txt_row.lower() or "/" not in txt_row: continue
+            so_kh     = ""
+            trich_yeu = ""
 
-            # 🎯 BẮC TỌA ĐỘ CỘT THEO ẢNH CHỤP THÁM THÍNH
-            so_kh     = tds[3].text.strip() # Lấy ở cột 4
-            trich_yeu = tds[6].text.strip() # Lấy ở cột 7
+            # 🧠 QUÉT TOÀN BỘ DÒNG TỰ PHÂN LOẠI
+            for td in tds:
+                txt = td.text.strip()
+                if not txt: continue
 
-            # --- DÒNG LỆNH ÉP GỬI ĐỂ TEST (BỎ KIỂM TRA TRÙNG LẶP) ---
+                # 1. Nhận diện Số hiệu (Có dấu /)
+                if la_so_hieu_chuan(txt) and not so_kh:
+                    so_kh = txt
+                    continue
+
+                # 2. Nhận diện Trích yếu (Là đoạn text dài nhất, không chứa / và không phải ngày tháng)
+                if len(txt) > len(trich_yeu) and "số ký hiệu" not in txt.lower():
+                    if len(txt) > 15 and not la_so_hieu_chuan(txt) and not re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', txt):
+                        trich_yeu = txt
+
+            # Ép chạy test không kiểm tra trùng lặp để anh Hoàn xem kết quả
             if so_kh: 
+                if not trich_yeu: trich_yeu = "(Không bóc được trích yếu)"
                 ds_vb_moi.append(
-                    f"📍 Số ký hiệu: <b>{so_kh}</b>\n"
-                    f"📝 Trích yếu: {trich_yeu}"
+                    f"📍 Số ký hiệu chuẩn: <b>{so_kh}</b>\n"
+                    f"📝 Trích yếu chuẩn: {trich_yeu}"
                 )
 
         if ds_vb_moi:
-            so_luong = len(ds_vb_moi)
-            noi_dung = "\n---\n".join(ds_vb_moi[:3]) # Gửi 3 tin nhắn gần nhất để xem trích yếu có chuẩn không
+            noi_dung = "\n---\n".join(ds_vb_moi[:3]) 
             msg = (
-                f"🚀 <b>NGHIỆM THU VĂN BẢN (KHỚP CỘT 4 VÀ 7)</b>\n"
+                f"🚀 <b>NGHIỆM THU THÔNG MINH (TỰ BÓC TÁCH CHỮ)</b>\n"
                 f"⏰ Cập nhật: {datetime.now().strftime('%H:%M %d/%m/%Y')}\n\n"
                 f"{noi_dung}"
             )
             gui_telegram(msg)
-            luu_ds_da_gui(ds_da_gui)
-            log.info("🔥 Đã đẩy văn bản nghiệm thu lên Telegram!")
+            log.info("🔥 Đã bắn chữ bóc tách thông minh lên Telegram!")
         else:
-            log.info("✅ Không tìm thấy văn bản để bóc tách.")
+            log.info("✅ Không lấy được văn bản rỗng.")
 
     except Exception as e:
         log.error(f"❌ Lỗi: {e}")
