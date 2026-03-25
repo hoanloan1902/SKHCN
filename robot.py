@@ -25,6 +25,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
 FILE_DA_GUI = "da_gui.json"
 
+
 # ============================================================
 # 2. LOGGING
 # ============================================================
@@ -110,30 +111,30 @@ def chay_robot():
             txt_row = row.text.strip()
             if "số ký hiệu" in txt_row.lower() or "/" not in txt_row: continue
 
-            # 🎯 CHỐT TỌA ĐỘ CỘT THÁM THÍNH
+            # 🎯 BẮC TỌA ĐỘ CỘT THEO ẢNH CHỤP THÁM THÍNH
             so_kh     = tds[3].text.strip() # Lấy ở cột 4
             trich_yeu = tds[6].text.strip() # Lấy ở cột 7
 
-            if so_kh and so_kh not in ds_da_gui:
+            # --- DÒNG LỆNH ÉP GỬI ĐỂ TEST (BỎ KIỂM TRA TRÙNG LẶP) ---
+            if so_kh: 
                 ds_vb_moi.append(
                     f"📍 Số ký hiệu: <b>{so_kh}</b>\n"
                     f"📝 Trích yếu: {trich_yeu}"
                 )
-                ds_da_gui.add(so_kh)
 
         if ds_vb_moi:
             so_luong = len(ds_vb_moi)
-            noi_dung = "\n---\n".join(ds_vb_moi[:5]) 
+            noi_dung = "\n---\n".join(ds_vb_moi[:3]) # Gửi 3 tin nhắn gần nhất để xem trích yếu có chuẩn không
             msg = (
-                f"🚀 <b>SỞ KH&CN: CÓ {so_luong} VĂN BẢN ĐẾN MỚI</b>\n"
+                f"🚀 <b>NGHIỆM THU VĂN BẢN (KHỚP CỘT 4 VÀ 7)</b>\n"
                 f"⏰ Cập nhật: {datetime.now().strftime('%H:%M %d/%m/%Y')}\n\n"
                 f"{noi_dung}"
             )
             gui_telegram(msg)
             luu_ds_da_gui(ds_da_gui)
-            log.info(f"🔥 Đã đẩy {so_luong} văn bản chuẩn lên Telegram!")
+            log.info("🔥 Đã đẩy văn bản nghiệm thu lên Telegram!")
         else:
-            log.info("✅ Không có văn bản mới (Hệ thống đã nhớ văn bản cũ).")
+            log.info("✅ Không tìm thấy văn bản để bóc tách.")
 
     except Exception as e:
         log.error(f"❌ Lỗi: {e}")
