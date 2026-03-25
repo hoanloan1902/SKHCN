@@ -67,7 +67,7 @@ def chuyen_chuoi_thanh_ngay(txt_ngay: str):
 
 
 def chay_robot():
-    log.info("--- BẮT ĐẦU QUÉT HỆ THỐNG SỞ KH&CN V2.6 (BỐI HẠN CHUẨN XÁC) ---")
+    log.info("--- BẮT ĐẦU QUÉT HỆ THỐNG SỞ KH&CN V2.7 (SIÊU CHẶN NHẦM LẪN HẠN) ---")
     driver = None
     ds_da_gui = tai_ds_da_gui()
     ngay_hom_nay = datetime.now() + timedelta(hours=7)
@@ -95,7 +95,7 @@ def chay_robot():
             driver.execute_script("document.forms[0].submit()")
         time.sleep(15)
 
-        # QUÉT 2 VĂN BẢN MỚI NHẤT MỖI LẦN
+        # QUÉT 2 VĂN BẢN MỚI NHẤT
         for lan_quet in range(2): 
             driver.get(URL_DANH_SACH)
             time.sleep(20)
@@ -147,23 +147,24 @@ def chay_robot():
                     han_xl_tim_thay = "Không có hạn"
                     khoang_cach_ngay = 999
 
-                    # 🎯 CHIẾN THUẬT QUÉT TỪ KHÓA CẠNH NGÀY THÁNG
                     mau_tim_ngay = r'(\b\d{1,2}/\d{1,2}/\d{4}\b)'
 
                     for match in re.finditer(mau_tim_ngay, page_text):
                         ngay_van_ban = match.group(1)
                         vi_tri_ngay = match.start()
                         
-                        # Cắt 35 ký tự bên trái (đứng trước ngày) xem có từ khóa liên quan đến "trước", "hạn" hay không
-                        chu_ngu_canh = page_text_lower[max(0, vi_tri_ngay - 35):vi_tri_ngay]
+                        # Cắt 30 ký tự bên trái
+                        chu_ngu_canh = page_text_lower[max(0, vi_tri_ngay - 30):vi_tri_ngay]
                         
-                        if "trước" in chu_ngu_canh or "hạn" in chu_ngu_canh or "báo cáo" in chu_ngu_canh:
+                        # 🎯 ĐIỀU KIỆN CHẶT CHẼ: Phải chứa chữ "trước ngày" cụ thể
+                        if "trước ngày" in chu_ngu_canh:
                             doi_tuong_ngay = chuyen_chuoi_thanh_ngay(ngay_van_ban)
                             if doi_tuong_ngay:
                                 date_mau = doi_tuong_ngay.date()
-                                date_nay = ngay_hom_today = (datetime.now() + timedelta(hours=7)).date()
+                                date_nay = ngay_hom_nay.date()
                                 
-                                if date_mau >= date_nay:
+                                # Chặn không cho lấy ngày hôm nay làm hạn xử lý (Khoảng cách phải >= 1 ngày)
+                                if date_mau > date_nay:
                                     kc = (date_mau - date_nay).days
                                     if kc < khoang_cach_ngay:
                                         khoang_cach_ngay = kc
@@ -177,9 +178,9 @@ def chay_robot():
                         f"⏳ <b>Hạn xử lý:</b> {han_xl_tim_thay}"
                     )
 
-                    thong_bao_chot = f"🚀 <b>QUÉT VĂN BẢN ĐẾN SỞ KH&CN (V2.6)</b>\n⏰ {ngay_hom_nay.strftime('%H:%M %d/%m/%Y')}\n\n"
+                    thong_bao_chot = f"🚀 <b>QUÉT VĂN BẢN ĐẾN SỞ KH&CN (V2.7)</b>\n⏰ {ngay_hom_nay.strftime('%H:%M %d/%m/%Y')}\n\n"
 
-                    if 0 <= khoang_cach_ngay <= 2:
+                    if 0 < khoang_cach_ngay <= 2: # Chặn lấy khoảng cách = 0 (trùng ngày hiện tại)
                         thong_bao_chot += f"🚨 <b>DANH SÁCH VĂN BẢN KHẨN (HẠN ≤ 2 NGÀY)</b> 🚨\n\n🔴 <b>[GẤP HẠN CÒN {khoang_cach_ngay} NGÀY]</b>\n{khung_chu_telegram}"
                     else:
                         thong_bao_chot += f"📋 <b>DANH SÁCH VĂN BẢN THƯỜNG</b>\n\n🔹 <b>[Bình thường]</b>\n{khung_chu_telegram}"
@@ -190,7 +191,7 @@ def chay_robot():
                     break 
 
             if not tim_thay_vb_moi:
-                log.info("✅ Không tìm thấy văn bản mới ở vòng quét này.")
+                log.info("✅ Không tìm thấy văn bản mới.")
                 break 
 
     except Exception as e:
