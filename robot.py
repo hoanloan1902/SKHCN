@@ -1,6 +1,5 @@
 import time
 import os
-import json
 import logging
 import requests
 import re
@@ -24,7 +23,6 @@ PASS_WORD        = os.environ.get("SKHCN_PASS", "")
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-FILE_DA_GUI = "da_gui.json"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
@@ -39,14 +37,14 @@ def gui_telegram(msg: str) -> bool:
     except Exception:
         return False
 
-
-def la_ngay_thang(text: str) -> bool:
-    clean_text = text.replace("(", "").replace(")", "").strip()
-    return bool(re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', clean_text))
+# Kiểm tra ngày tháng năm dd/mm/yyyy
+def la_ngay_thang(txt: str) -> bool:
+    t = txt.replace("(", "").replace(")", "").strip()
+    return bool(re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', t))
 
 
 def chay_robot():
-    log.info("--- BẮT ĐẦU QUÉT HỆ THỐNG SỞ KH&CN (GIAO DIỆN TINH GỌN) ---")
+    log.info("--- BẮT ĐẦU QUÉT HỆ THỐNG SỞ KH&CN (PHÂN TÁCH CHUỖI CHUẨN) ---")
     driver = None
 
     try:
@@ -59,7 +57,6 @@ def chay_robot():
         driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
         wait = WebDriverWait(driver, 30)
 
-        # Đăng nhập
         driver.get(URL_LOGIN)
         wait.until(EC.presence_of_element_located((By.NAME, "Username")))
         driver.find_element(By.NAME, "Username").send_keys(USER_NAME)
@@ -70,7 +67,6 @@ def chay_robot():
             driver.execute_script("document.forms[0].submit()")
         time.sleep(15)
 
-        # Vào danh sách
         driver.get(URL_DANH_SACH)
         time.sleep(35)
 
@@ -82,44 +78,48 @@ def chay_robot():
         ds_vb_moi = []
 
         for row in rows:
-            tds = row.find_elements(By.TAG_NAME, "td")
-            if len(tds) < 5: continue
+            txt_row = row.text.strip()
+            if not txt_row or "số ký hiệu" in txt_row.lower() or "/" not in txt_row:
+                continue
 
-            # Thu thập toàn bộ chữ có giá trị trong 1 dòng
-            o_chu_co_chu = []
-            for td in tds:
-                txt = td.text.strip()
-                if txt and txt.lower() != "trích yếu":
-                    o_chu_co_chu.append(txt)
-
-            if len(o_chu_co_chu) < 4: continue
+            # Cắt nhỏ dòng chữ thành các từ riêng biệt
+            parts = txt_row.split()
+            if len(parts) < 6: continue
 
             so_hieu = ""
             ngay_den = ""
-            han_xl = "Không có"
             trich_yeu = ""
+            han_xl = "Không có"
 
-            # --- Thuật toán bóc tách tinh gọn ---
-            for text in o_chu_co_chu:
-                # 1. Lấy ngày đến (Dạng ngày đầu tiên xuất hiện đơn lẻ hoặc kèm ngoặc đơn)
-                if la_ngay_thang(text) and not ngay_den:
-                    ngay_den = text.replace("(", "").replace(")", "").strip()
-                    continue
+            # 🔍 Thuật toán bóc tách theo vị trí dòng của Lotus:
+            # - Phần tử 0: Số đến nội bộ
+            # - Phần tử 1: Ngày đến (dd/mm/yyyy)
+            # - Phần tử 2: (Ngày chuyển) -> Bỏ qua
 
-                # 2. Lấy số hiệu (Chứa dấu / và không phải ngày tháng thuần túy)
-                if "/" in text and not la_ngay_thang(text) and not so_hieu:
-                    so_hieu = text
-                    continue
+            if len(parts) > 1 and la_ngay_thang(parts[1]):
+                ngay_den = parts[1]
 
-                # 3. Lấy trích yếu (Đoạn chữ dài nhất)
-                if len(text) > len(trich_yeu) and len(text) > 25 and not la_ngay_thang(text):
-                    trich_yeu = text
-
-            # Gạn lọc hạn xử lý (thường nằm ở cuối hoặc chứa mốc thời gian hạn)
-            if len(o_chu_co_chu) > 4:
-                cuoi_dong = o_chu_co_chu[-1]
-                if la_ngay_thang(cuoi_dong) or "ngày" in cuoi_dong.lower():
-                    han_xl = cuoi_dong
+            # Quét tìm Số hiệu và Trích yếu thực sự
+            for i in range(len(parts)):
+                p = parts[i]
+                # Nếu từ có chứa '/' và ko phải ngày tháng đơn thuần -> đích thị là Số ký hiệu văn bản!
+                if "/" in p and not la_ngay_thang(p) and not so_hieu:
+                    so_hieu = p
+                    
+                    # 💥 TRÍCH YẾU sẽ bắt đầu ngay sau Cơ quan ban hành (Cơ quan ban hành nằm sau Số hiệu)
+                    # Chúng ta gom tất cả các từ từ vị trí Số hiệu + 3 từ trở đi (bỏ qua cơ quan ban hành ngắn như UBND tỉnh...)
+                    start_trich_yeu = i + 3 if "ubnd" in parts[i+1].lower() or "sở" in parts[i+1].lower() else i + 2
+                    
+                    if start_trich_yeu < len(parts):
+                        doan_duoi = " ".join(parts[start_trich_yeu:])
+                        
+                        # Tách lấy hạn xử lý nếu có mốc ngày ở cuối dòng
+                        if la_ngay_thang(parts[-1]):
+                            han_xl = parts[-1]
+                            trich_yeu = " ".join(parts[start_trich_yeu:-1])
+                        else:
+                            trich_yeu = doan_duoi
+                    break
 
             if so_hieu and trich_yeu:
                 ds_vb_moi.append(
@@ -130,14 +130,15 @@ def chay_robot():
                 )
 
         if ds_vb_moi:
-            noi_dung = "\n\n➖➖➖➖➖➖➖➖➖➖\n\n".join(ds_vb_moi[:3]) # Hiển thị 3 cái test cho thoáng mắt
+            # Gửi 3 cái test cho thoáng mắt anh Hoàn nhé!
+            noi_dung = "\n\n➖➖➖➖➖➖➖➖➖➖\n\n".join(ds_vb_moi[:3])
             msg = (
-                f"🚀 <b>VĂN BẢN ĐẾN SỞ KH&CN (TINH GỌN)</b>\n"
+                f"🚀 <b>VĂN BẢN ĐẾN SỞ KH&CN (CẮT CHUỖI CHUẨN)</b>\n"
                 f"⏰ Quét lúc: {datetime.now().strftime('%H:%M %d/%m/%Y')}\n\n"
                 f"{noi_dung}"
             )
             gui_telegram(msg)
-            log.info("🔥 Đã đẩy giao diện tinh gọn lên Telegram!")
+            log.info("🔥 Đã bốc tách cắt chuỗi thành công!")
 
     except Exception as e:
         log.error(f"❌ Lỗi: {e}")
