@@ -1,5 +1,6 @@
 import time
 import os
+import json
 import logging
 import requests
 from datetime import datetime
@@ -12,7 +13,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 # ============================================================
-# CẤU HÌNH — Đọc từ GitHub Secrets
+# 1. CẤU HÌNH — Đọc từ GitHub Secrets
 # ============================================================
 URL_LOGIN     = "https://hscvkhcn.dienbien.gov.vn/names.nsf?Login"
 URL_DANH_SACH = "https://hscvkhcn.dienbien.gov.vn/qlvb/vbden.nsf/default?openform&frm=Private_ChoXL?openForm"
@@ -22,13 +23,33 @@ PASS_WORD        = os.environ.get("SKHCN_PASS", "")
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
+FILE_DA_GUI = "da_gui.json"
 
+# ============================================================
+# 2. LOGGING
+# ============================================================
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[logging.StreamHandler()]
 )
 log = logging.getLogger(__name__)
+
+
+# ============================================================
+# 3. QUẢN LÝ TRẠNG THÁI (Chống trùng lặp)
+# ============================================================
+def tai_ds_da_gui() -> set:
+    try:
+        with open(FILE_DA_GUI, "r", encoding="utf-8") as f:
+            return set(json.load(f))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return set()
+
+
+def luu_ds_da_gui(ds: set):
+    with open(FILE_DA_GUI, "w", encoding="utf-8") as f:
+        json.dump(list(ds), f, ensure_ascii=False, indent=2)
 
 
 def gui_telegram(msg: str) -> bool:
@@ -46,9 +67,13 @@ def gui_telegram(msg: str) -> bool:
         return False
 
 
+# ============================================================
+# 4. ROBOT CHÍNH
+# ============================================================
 def chay_robot():
-    log.info("--- BẮT ĐẦU QUÉT HỆ THỐNG SỞ KH&CN (CHẾ ĐỘ CHUẨN CỘT) ---")
+    log.info("--- BẮT ĐẦU QUÉT HỆ THỐNG SỞ KH&CN ---")
     driver = None
+    ds_da_gui = tai_ds_da_gui()
 
     try:
         options = Options()
@@ -62,9 +87,9 @@ def chay_robot():
         driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
         wait = WebDriverWait(driver, 30)
 
+        # 1. Đăng nhập
         driver.get(URL_LOGIN)
         wait.until(EC.presence_of_element_located((By.NAME, "Username")))
-        
         driver.find_element(By.NAME, "Username").send_keys(USER_NAME)
         driver.find_element(By.NAME, "Password").send_keys(PASS_WORD)
         
@@ -74,49 +99,49 @@ def chay_robot():
             driver.execute_script("document.forms[0].submit()")
         time.sleep(15)
 
+        # 2. Vào danh sách văn bản
         driver.get(URL_DANH_SACH)
-        time.sleep(35)
+        time.sleep(35) # Chờ load hẳn bảng
 
         driver.switch_to.default_content()
         wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "Main")))
+        log.info("✅ Đã vào Frame 'Main' thành công!")
 
         wait.until(EC.presence_of_element_located((By.TAG_NAME, "tr")))
         rows = driver.find_elements(By.TAG_NAME, "tr")
         ds_vb_moi = []
 
-        log.info(f"Tìm thấy {len(rows)} hàng.")
-
         for row in rows:
             tds = row.find_elements(By.TAG_NAME, "td")
-            if len(tds) < 8: continue # Chỉ đọc dòng có đầy đủ các cột
+            if len(tds) < 8: continue
 
             txt_row = row.text.strip()
             if "số ký hiệu" in txt_row.lower() or "/" not in txt_row: continue
 
-            # DỰA VÀO ẢNH CHỤP MÀN HÌNH NGẦM HÔM QUA:
-            # Cột 4 (chỉ số 3): Số ký hiệu (Ví dụ: 123/UBND)
-            # Cột 7 (chỉ số 6): Trích yếu nội dung
-            so_kh     = tds[3].text.strip()
-            trich_yeu = tds[6].text.strip()
+            # 🎯 KHÓA CHẾT TỌA ĐỘ CỘT THEO ẢNH CHỤP THÁM THÍNH
+            so_kh     = tds[3].text.strip() # Lấy ở cột 4
+            trich_yeu = tds[6].text.strip() # Lấy ở cột 7
 
-            if so_kh and trich_yeu:
+            if so_kh and so_kh not in ds_da_gui:
                 ds_vb_moi.append(
                     f"📍 Số ký hiệu: <b>{so_kh}</b>\n"
                     f"📝 Trích yếu: {trich_yeu}"
                 )
+                ds_da_gui.add(so_kh)
 
         if ds_vb_moi:
-            # Lấy 3 cái để Test xem giao diện bốc cột chuẩn chưa anh nhé!
-            noi_dung = "\n---\n".join(ds_vb_moi[:3]) 
+            so_luong = len(ds_vb_moi)
+            noi_dung = "\n---\n".join(ds_vb_moi[:5]) # Lấy tối đa 5 tin nhắn để tránh spam lụt chat
             msg = (
-                f"🔔 <b>THU THẬP VĂN BẢN (KHỚP THEO ẢNH NGẦM)</b> 🔔\n"
+                f"🚀 <b>SỞ KH&CN: CÓ {so_luong} VĂN BẢN ĐẾN MỚI</b>\n"
                 f"⏰ Cập nhật: {datetime.now().strftime('%H:%M %d/%m/%Y')}\n\n"
                 f"{noi_dung}"
             )
             gui_telegram(msg)
-            log.info("🔥 Đã bốc văn bản theo cột ảnh ngầm thành công!")
+            luu_ds_da_gui(ds_da_gui)
+            log.info(f"🔥 Đã đẩy {so_luong} văn bản chuẩn lên Telegram!")
         else:
-            log.info("Không lấy được văn bản rỗng.")
+            log.info("✅ Không có văn bản mới (Hoặc hệ thống đã nhớ văn bản cũ rồi).")
 
     except Exception as e:
         log.error(f"❌ Lỗi: {e}")
