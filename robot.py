@@ -29,7 +29,6 @@ FILE_DA_GUI = "da_gui.json"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
-
 def tai_ds_da_gui() -> set:
     try:
         with open(FILE_DA_GUI, "r", encoding="utf-8") as f:
@@ -37,11 +36,9 @@ def tai_ds_da_gui() -> set:
     except (FileNotFoundError, json.JSONDecodeError):
         return set()
 
-
 def luu_ds_da_gui(ds: set):
     with open(FILE_DA_GUI, "w", encoding="utf-8") as f:
         json.dump(list(ds), f, ensure_ascii=False, indent=2)
-
 
 def gui_telegram(msg: str) -> bool:
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: return False
@@ -52,11 +49,9 @@ def gui_telegram(msg: str) -> bool:
     except Exception:
         return False
 
-
 def la_ngay_thang(txt: str) -> bool:
     t = txt.replace("(", "").replace(")", "").strip()
     return bool(re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', t))
-
 
 def chuyen_chuoi_thanh_ngay(txt_ngay: str):
     try:
@@ -65,9 +60,8 @@ def chuyen_chuoi_thanh_ngay(txt_ngay: str):
     except ValueError:
         return None
 
-
 def chay_robot():
-    log.info("--- BẮT ĐẦU QUÉT HỆ THỐNG SỞ KH&CN V2.7 (SIÊU CHẶN NHẦM LẪN HẠN) ---")
+    log.info("--- BẮT ĐẦU QUÉT HỆ THỐNG SỞ KH&CN V2.8 (QUÉT SẠCH BÁCH DANH SÁCH) ---")
     driver = None
     ds_da_gui = tai_ds_da_gui()
     ngay_hom_nay = datetime.now() + timedelta(hours=7)
@@ -95,107 +89,117 @@ def chay_robot():
             driver.execute_script("document.forms[0].submit()")
         time.sleep(15)
 
-        # QUÉT 2 VĂN BẢN MỚI NHẤT
-        for lan_quet in range(2): 
-            driver.get(URL_DANH_SACH)
-            time.sleep(20)
+        # 🚀 Bước 2: Vào danh sách
+        driver.get(URL_DANH_SACH)
+        time.sleep(20)
 
-            driver.switch_to.default_content()
-            wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "Main")))
+        driver.switch_to.default_content()
+        wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "Main")))
 
-            wait.until(EC.presence_of_element_located((By.TAG_NAME, "tr")))
-            rows = driver.find_elements(By.TAG_NAME, "tr")
+        wait.until(EC.presence_of_element_located((By.TAG_NAME, "tr")))
+        rows = driver.find_elements(By.TAG_NAME, "tr")
 
-            tim_thay_vb_moi = False
-            
-            for row in rows:
-                txt_row = row.text.strip()
-                if not txt_row or "số ký hiệu" in txt_row.lower() or "/" not in txt_row:
+        ds_van_ban_can_quet = []
+
+        # 🔍 LẬP DANH SÁCH TẤT CẢ VĂN BẢN MỚI TRƯỚC (KHÔNG BỎ SÓT)
+        for row in rows:
+            txt_row = row.text.strip()
+            if not txt_row or "số ký hiệu" in txt_row.lower() or "/" not in txt_row:
+                continue
+
+            parts = txt_row.split()
+            if len(parts) < 4: continue
+
+            so_hieu = ""
+            ngay_den = ""
+            trich_yeu = ""
+
+            if len(parts) > 1 and la_ngay_thang(parts[1]):
+                ngay_den = parts[1]
+
+            for i, p in enumerate(parts):
+                if "/" in p and not la_ngay_thang(p) and not so_hieu:
+                    so_hieu = p
+                    if (i + 2) < len(parts):
+                        trich_yeu = " ".join(parts[i+2:])
+                    break
+
+            if so_hieu in ds_da_gui:
+                continue
+
+            tds = row.find_elements(By.TAG_NAME, "td")
+            if tds:
+                try:
+                    # Lấy link chi tiết của văn bản
+                    the_a = tds[min(len(tds)-1, 3)].find_element(By.TAG_NAME, "a")
+                    link_chi_tiet = the_a.get_attribute("href")
+                    ds_van_ban_can_quet.append({
+                        "so_hieu": so_hieu,
+                        "ngay_den": ngay_den,
+                        "trich_yeu": trich_yeu,
+                        "link": link_chi_tiet
+                    })
+                except Exception:
                     continue
 
-                parts = txt_row.split()
-                if len(parts) < 4: continue
+        log.info(f"📋 Tìm thấy tổng cộng {len(ds_van_ban_can_quet)} văn bản mới. Bắt đầu quét chi tiết...")
 
-                so_hieu = ""
-                ngay_den = ""
-                trich_yeu = ""
+        # 🚀 Bước 3: Quét chi tiết từng văn bản (Giới hạn tối đa 15 cái 1 lần chạy để tránh treo GitHub)
+        for vb in ds_van_ban_can_quet[:15]:
+            try:
+                driver.get(vb["link"])
+                time.sleep(5) # Mở thẳng link nên tải siêu nhanh, chỉ mất 5 giây!
 
-                if len(parts) > 1 and la_ngay_thang(parts[1]):
-                    ngay_den = parts[1]
+                page_text = driver.find_element(By.TAG_NAME, "body").text
+                page_text_lower = page_text.lower()
 
-                for i, p in enumerate(parts):
-                    if "/" in p and not la_ngay_thang(p) and not so_hieu:
-                        so_hieu = p
-                        if (i + 2) < len(parts):
-                            trich_yeu = " ".join(parts[i+2:])
-                        break
+                han_xl_tim_thay = "Không có hạn"
+                khoang_cach_ngay = 999
 
-                if so_hieu in ds_da_gui:
-                    continue
+                mau_tim_ngay = r'(\b\d{1,2}/\d{1,2}/\d{4}\b)'
 
-                tds = row.find_elements(By.TAG_NAME, "td")
-                if tds:
-                    tim_thay_vb_moi = True
-                    o_bam = tds[min(len(tds)-1, 3)] 
+                for match in re.finditer(mau_tim_ngay, page_text):
+                    ngay_van_ban = match.group(1)
+                    vi_tri_ngay = match.start()
                     
-                    o_bam.click()
-                    time.sleep(15)
-
-                    page_text = driver.find_element(By.TAG_NAME, "body").text
-                    page_text_lower = page_text.lower()
+                    chu_ngu_canh = page_text_lower[max(0, vi_tri_ngay - 30):vi_tri_ngay]
                     
-                    han_xl_tim_thay = "Không có hạn"
-                    khoang_cach_ngay = 999
+                    if "trước ngày" in chu_ngu_canh:
+                        doi_tuong_ngay = chuyen_chuoi_thanh_ngay(ngay_van_ban)
+                        if doi_tuong_ngay:
+                            date_mau = doi_tuong_ngay.date()
+                            date_nay = ngay_hom_nay.date()
+                            
+                            if date_mau > date_nay:
+                                kc = (date_mau - date_nay).days
+                                if kc < khoang_cach_ngay:
+                                    khoang_cach_ngay = kc
+                                    han_xl_tim_thay = ngay_van_ban
 
-                    mau_tim_ngay = r'(\b\d{1,2}/\d{1,2}/\d{4}\b)'
+                # Bắn Telegram
+                khung_chu_telegram = (
+                    f"🏷️ <b>Số hiệu:</b> {vb['so_hieu']}\n"
+                    f"📅 <b>Ngày đến:</b> {vb['ngay_den']}\n"
+                    f"📝 <b>Trích yếu:</b> {vb['trich_yeu'][:200]}...\n"
+                    f"⏳ <b>Hạn xử lý:</b> {han_xl_tim_thay}"
+                )
 
-                    for match in re.finditer(mau_tim_ngay, page_text):
-                        ngay_van_ban = match.group(1)
-                        vi_tri_ngay = match.start()
-                        
-                        # Cắt 30 ký tự bên trái
-                        chu_ngu_canh = page_text_lower[max(0, vi_tri_ngay - 30):vi_tri_ngay]
-                        
-                        # 🎯 ĐIỀU KIỆN CHẶT CHẼ: Phải chứa chữ "trước ngày" cụ thể
-                        if "trước ngày" in chu_ngu_canh:
-                            doi_tuong_ngay = chuyen_chuoi_thanh_ngay(ngay_van_ban)
-                            if doi_tuong_ngay:
-                                date_mau = doi_tuong_ngay.date()
-                                date_nay = ngay_hom_nay.date()
-                                
-                                # Chặn không cho lấy ngày hôm nay làm hạn xử lý (Khoảng cách phải >= 1 ngày)
-                                if date_mau > date_nay:
-                                    kc = (date_mau - date_nay).days
-                                    if kc < khoang_cach_ngay:
-                                        khoang_cach_ngay = kc
-                                        han_xl_tim_thay = ngay_van_ban
+                thong_bao_chot = f"🚀 <b>QUÉT VĂN BẢN ĐẾN SỞ KH&CN (V2.8)</b>\n⏰ {ngay_hom_nay.strftime('%H:%M %d/%m/%Y')}\n\n"
 
-                    # Soạn tin đẩy lên Telegram
-                    khung_chu_telegram = (
-                        f"🏷️ <b>Số hiệu:</b> {so_hieu}\n"
-                        f"📅 <b>Ngày đến:</b> {ngay_den}\n"
-                        f"📝 <b>Trích yếu:</b> {trich_yeu[:200]}...\n"
-                        f"⏳ <b>Hạn xử lý:</b> {han_xl_tim_thay}"
-                    )
+                if 0 < khoang_cach_ngay <= 2:
+                    thong_bao_chot += f"🚨 <b>DANH SÁCH VĂN BẢN KHẨN (HẠN ≤ 2 NGÀY)</b> 🚨\n\n🔴 <b>[GẤP HẠN CÒN {khoang_cach_ngay} NGÀY]</b>\n{khung_chu_telegram}"
+                else:
+                    thong_bao_chot += f"📋 <b>DANH SÁCH VĂN BẢN THƯỜNG</b>\n\n🔹 <b>[Bình thường]</b>\n{khung_chu_telegram}"
 
-                    thong_bao_chot = f"🚀 <b>QUÉT VĂN BẢN ĐẾN SỞ KH&CN (V2.7)</b>\n⏰ {ngay_hom_nay.strftime('%H:%M %d/%m/%Y')}\n\n"
+                gui_telegram(thong_bao_chot)
+                ds_da_gui.add(vb["so_hieu"])
+                luu_ds_da_gui(ds_da_gui)
 
-                    if 0 < khoang_cach_ngay <= 2: # Chặn lấy khoảng cách = 0 (trùng ngày hiện tại)
-                        thong_bao_chot += f"🚨 <b>DANH SÁCH VĂN BẢN KHẨN (HẠN ≤ 2 NGÀY)</b> 🚨\n\n🔴 <b>[GẤP HẠN CÒN {khoang_cach_ngay} NGÀY]</b>\n{khung_chu_telegram}"
-                    else:
-                        thong_bao_chot += f"📋 <b>DANH SÁCH VĂN BẢN THƯỜNG</b>\n\n🔹 <b>[Bình thường]</b>\n{khung_chu_telegram}"
-
-                    gui_telegram(thong_bao_chot)
-                    ds_da_gui.add(so_hieu)
-                    luu_ds_da_gui(ds_da_gui)
-                    break 
-
-            if not tim_thay_vb_moi:
-                log.info("✅ Không tìm thấy văn bản mới.")
-                break 
+            except Exception as e:
+                log.error(f"❌ Lỗi quét văn bản {vb['so_hieu']}: {e}")
 
     except Exception as e:
-        log.error(f"❌ Lỗi: {e}")
+        log.error(f"❌ Lỗi hệ thống: {e}")
     finally:
         if driver:
             driver.quit()
