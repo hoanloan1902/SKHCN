@@ -1,39 +1,45 @@
-name: Robot Văn Bản Đến - Sở KH&CN V2.5
+name: SKHCN Robot Dual Bot (Tele + Zalo)
 
 on:
   schedule:
-    # Chạy giờ hành chính Việt Nam (Thứ 2 - Thứ 6)
-    - cron: '0 1,3,10 * * 1-5'
-    - cron: '30 6,8 * * 1-5'
-  workflow_dispatch: # Bấm tay chạy thử
+    # Chạy mỗi 30 phút từ 7h sáng đến 17h chiều (Giờ VN)
+    # 0-10 UTC tương ứng 7h-17h VN
+    - cron: '*/30 0-10 * * 1-5'
+  workflow_dispatch: # Nút bấm để anh tự chạy kiểm tra ngay lập tức
 
 jobs:
-  run-robot:
+  build:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.x'
+          python-version: '3.9'
 
-      - name: Cài đặt Google Chrome ổn định cho GitHub
+      - name: Install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
+          pip install requests selenium webdriver-manager
 
-      - name: Cài đặt thư viện Python
-        run: |
-          pip install selenium webdriver-manager requests
-
-      - name: Kích hoạt Robot quét văn bản
-        timeout-minutes: 5 # Bảo hiểm 5 phút
-        run: python robot.py
+      - name: Run Robot Script
         env:
+          # Các biến cũ của anh
           SKHCN_USER: ${{ secrets.SKHCN_USER }}
           SKHCN_PASS: ${{ secrets.SKHCN_PASS }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          # 2 BIẾN MỚI CẦN THÊM VÀO ĐÂY ĐỂ CHẠY ZALO
+          ZALO_TOKEN: ${{ secrets.ZALO_TOKEN }}
+          MY_ZALO_ID: ${{ secrets.MY_ZALO_ID }}
+        run: python robot.py
+
+      - name: Save History and Push
+        run: |
+          git config --local user.email "bot@github.com"
+          git config --local user.name "GitHub Action Bot"
+          git add da_gui.json
+          git commit -m "Cập nhật danh sách văn bản đã gửi [skip ci]" || exit 0
+          git push
