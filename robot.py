@@ -14,20 +14,18 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 # ============================================================
-# CẤU HÌNH HỆ THỐNG (Lấy từ Secrets)
+# CẤU HÌNH HỆ THỐNG
 # ============================================================
 URL_LOGIN      = "https://hscvkhcn.dienbien.gov.vn/names.nsf?Login"
 URL_DANH_SACH  = "https://hscvkhcn.dienbien.gov.vn/qlvb/vbden.nsf/default?openform&frm=Private_ChoXL?openForm"
 
 USER_NAME        = os.environ.get("SKHCN_USER", "")
 PASS_WORD        = os.environ.get("SKHCN_PASS", "")
-
-# Cấu hình Telegram
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# Cấu hình Zalo (Mới)
-ZALO_API_URL     = "https://api.zalobot.xyz/v1/send-message" # Link API của app Zalo Bot
+# Cấu hình Zalo (Mới thêm)
+ZALO_API_URL     = "https://api.zalobot.xyz/v1/send-message" 
 ZALO_TOKEN       = os.environ.get("ZALO_TOKEN", "")
 MY_ZALO_ID       = os.environ.get("MY_ZALO_ID", "")
 
@@ -53,7 +51,8 @@ def gui_telegram(msg: str) -> bool:
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         resp = requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=15)
         return resp.status_code == 200
-    except Exception: return False
+    except Exception:
+        return False
 
 def gui_zalo(msg_plain: str) -> bool:
     """Hàm gửi tin nhắn qua Zalo Bot Creator"""
@@ -66,7 +65,8 @@ def gui_zalo(msg_plain: str) -> bool:
         }
         resp = requests.post(ZALO_API_URL, json=payload, timeout=15)
         return resp.status_code == 200
-    except Exception: return False
+    except Exception:
+        return False
 
 def la_ngay_thang(txt: str) -> bool:
     t = txt.replace("(", "").replace(")", "").strip()
@@ -76,13 +76,13 @@ def chuyen_chuoi_thanh_ngay(txt_ngay: str):
     try:
         clean_txt = txt_ngay.replace("(", "").replace(")", "").strip()
         return datetime.strptime(clean_txt, "%d/%m/%Y")
-    except ValueError: return None
+    except ValueError:
+        return None
 
 def chay_robot():
-    log.info("--- BẮT ĐẦU QUÉT HỆ THỐNG SỞ KH&CN V2.9 (ZALO + TELEGRAM) ---")
+    log.info("--- BẮT ĐẦU QUÉT HỆ THỐNG SỞ KH&CN V2.9 (DUAL BOT: TELE + ZALO) ---")
     driver = None
     ds_da_gui = tai_ds_da_gui()
-    # GitHub Action chạy giờ UTC, +7 để ra giờ VN
     ngay_hom_nay = datetime.now() + timedelta(hours=7)
 
     try:
@@ -104,7 +104,7 @@ def chay_robot():
         driver.find_element(By.NAME, "Password").send_keys(PASS_WORD)
         try:
             driver.find_element(By.XPATH, "//input[@type='submit']").click()
-        except:
+        except Exception:
             driver.execute_script("document.forms[0].submit()")
         time.sleep(15)
 
@@ -120,6 +120,7 @@ def chay_robot():
 
         ds_van_ban_can_quet = []
 
+        # 🔍 LẬP DANH SÁCH TẤT CẢ VĂN BẢN MỚI
         for row in rows:
             txt_row = row.text.strip()
             if not txt_row or "số ký hiệu" in txt_row.lower() or "/" not in txt_row:
@@ -142,7 +143,8 @@ def chay_robot():
                         trich_yeu = " ".join(parts[i+2:])
                     break
 
-            if so_hieu in ds_da_gui: continue
+            if so_hieu in ds_da_gui:
+                continue
 
             tds = row.find_elements(By.TAG_NAME, "td")
             if tds:
@@ -150,10 +152,13 @@ def chay_robot():
                     the_a = tds[min(len(tds)-1, 3)].find_element(By.TAG_NAME, "a")
                     link_chi_tiet = the_a.get_attribute("href")
                     ds_van_ban_can_quet.append({
-                        "so_hieu": so_hieu, "ngay_den": ngay_den,
-                        "trich_yeu": trich_yeu, "link": link_chi_tiet
+                        "so_hieu": so_hieu,
+                        "ngay_den": ngay_den,
+                        "trich_yeu": trich_yeu,
+                        "link": link_chi_tiet
                     })
-                except: continue
+                except Exception:
+                    continue
 
         log.info(f"📋 Tìm thấy {len(ds_van_ban_can_quet)} văn bản mới.")
 
@@ -165,6 +170,7 @@ def chay_robot():
 
                 page_text = driver.find_element(By.TAG_NAME, "body").text
                 page_text_lower = page_text.lower()
+
                 han_xl_tim_thay = "Không có hạn"
                 khoang_cach_ngay = 999
                 mau_tim_ngay = r'(\b\d{1,2}/\d{1,2}/\d{4}\b)'
@@ -182,24 +188,24 @@ def chay_robot():
                                 khoang_cach_ngay = kc
                                 han_xl_tim_thay = ngay_van_ban
 
-                # Nội dung thông báo
-                noidung_base = (
+                # CHUẨN BỊ NỘI DUNG GỬI
+                khung_chu_plain = (
                     f"🏷️ Số hiệu: {vb['so_hieu']}\n"
                     f"📅 Ngày đến: {vb['ngay_den']}\n"
                     f"📝 Trích yếu: {vb['trich_yeu'][:150]}...\n"
                     f"⏳ Hạn xử lý: {han_xl_tim_thay}"
                 )
 
-                # 1. Bắn Telegram (Có HTML)
-                thong_bao_tele = f"🚀 <b>VĂN BẢN ĐẾN SỞ KH&CN</b>\n"
+                # 1. Bắn Telegram
+                thong_bao_tele = f"🚀 <b>QUÉT VĂN BẢN ĐẾN (V2.9)</b>\n"
                 if 0 < khoang_cach_ngay <= 2:
-                    thong_bao_tele += f"🚨 <b>GẤP (CÒN {khoang_cach_ngay} NGÀY)</b>\n\n{noidung_base}"
+                    thong_bao_tele += f"🚨 <b>GẤP (HẠN CÒN {khoang_cach_ngay} NGÀY)</b>\n\n{khung_chu_plain}"
                 else:
-                    thong_bao_tele += f"📋 <b>BÌNH THƯỜNG</b>\n\n{noidung_base}"
+                    thong_bao_tele += f"📋 <b>BÌNH THƯỜNG</b>\n\n{khung_chu_plain}"
                 gui_telegram(thong_bao_tele)
 
-                # 2. Bắn Zalo (Text thường)
-                thong_bao_zalo = f"🚀 VĂN BẢN ĐẾN SỞ KH&CN\n{noidung_base}"
+                # 2. Bắn Zalo
+                thong_bao_zalo = f"🚀 QUÉT VĂN BẢN ĐẾN (V2.9)\n{khung_chu_plain}"
                 gui_zalo(thong_bao_zalo)
 
                 ds_da_gui.add(vb["so_hieu"])
@@ -211,7 +217,8 @@ def chay_robot():
     except Exception as e:
         log.error(f"❌ Lỗi hệ thống: {e}")
     finally:
-        if driver: driver.quit()
+        if driver:
+            driver.quit()
 
 if __name__ == "__main__":
     chay_robot()
