@@ -4,7 +4,9 @@ import json
 import logging
 import requests
 import re
+import telebot
 from datetime import datetime, timedelta
+from threading import Thread
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
@@ -14,211 +16,126 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 # ============================================================
-# CẤU HÌNH HỆ THỐNG
+# CẤU HÌNH HỆ THỐNG (Lấy từ Environment Variables trên Render)
 # ============================================================
 URL_LOGIN      = "https://hscvkhcn.dienbien.gov.vn/names.nsf?Login"
 URL_DANH_SACH  = "https://hscvkhcn.dienbien.gov.vn/qlvb/vbden.nsf/default?openform&frm=Private_ChoXL?openForm"
 
-USER_NAME        = os.environ.get("SKHCN_USER", "")
-PASS_WORD        = os.environ.get("SKHCN_PASS", "")
+USER_NAME       = os.environ.get("SKHCN_USER", "")
+PASS_WORD       = os.environ.get("SKHCN_PASS", "")
 TELEGRAM_TOKEN   = os.environ.get("TELEGRAM_TOKEN", "")
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# Cấu hình Zalo (Mới thêm)
-ZALO_API_URL     = "https://api.zalobot.xyz/v1/send-message" 
-ZALO_TOKEN       = os.environ.get("ZALO_TOKEN", "")
-MY_ZALO_ID       = os.environ.get("MY_ZALO_ID", "")
-
+# Khởi tạo Bot Telegram
+bot = telebot.TeleBot(TELEGRAM_TOKEN)
 FILE_DA_GUI = "da_gui.json"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger(__name__)
 
-def tai_ds_da_gui() -> set:
+# --- HÀM QUẢN LÝ DỮ LIỆU ---
+def tai_ds_da_gui():
     try:
-        with open(FILE_DA_GUI, "r", encoding="utf-8") as f:
-            return set(json.load(f))
-    except (FileNotFoundError, json.JSONDecodeError):
-        return set()
+        if os.path.exists(FILE_DA_GUI):
+            with open(FILE_DA_GUI, "r", encoding="utf-8") as f:
+                return set(json.load(f))
+    except: pass
+    return set()
 
-def luu_ds_da_gui(ds: set):
+def luu_ds_da_gui(ds):
     with open(FILE_DA_GUI, "w", encoding="utf-8") as f:
         json.dump(list(ds), f, ensure_ascii=False, indent=2)
 
-def gui_telegram(msg: str) -> bool:
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: return False
+def gui_telegram(msg):
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        resp = requests.post(url, data={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=15)
-        return resp.status_code == 200
-    except Exception:
-        return False
+        bot.send_message(TELEGRAM_CHAT_ID, msg, parse_mode="HTML")
+        return True
+    except: return False
 
-def gui_zalo(msg_plain: str) -> bool:
-    """Hàm gửi tin nhắn qua Zalo Bot Creator"""
-    if not ZALO_TOKEN or not MY_ZALO_ID: return False
-    try:
-        payload = {
-            "to": MY_ZALO_ID,
-            "message": msg_plain,
-            "token": ZALO_TOKEN
-        }
-        resp = requests.post(ZALO_API_URL, json=payload, timeout=15)
-        return resp.status_code == 200
-    except Exception:
-        return False
+# --- HÀM THỐNG KÊ (DÀNH CHO TRỢ LÝ ẢO) ---
+def thong_ke_nhanh():
+    ds = tai_ds_da_gui()
+    tong = len(ds)
+    msg = (
+        f"📊 <b>BÁO CÁO THỐNG KÊ</b>\n"
+        f"────────────────\n"
+        f"✅ Tổng văn bản đã quét: <b>{tong}</b>\n"
+        f"⏰ Cập nhật lúc: {datetime.now().strftime('%H:%M:%S')}\n"
+        f"🤖 Trạng thái: <i>Đang trực chiến...</i>"
+    )
+    return msg
 
-def la_ngay_thang(txt: str) -> bool:
-    t = txt.replace("(", "").replace(")", "").strip()
-    return bool(re.match(r'^\d{1,2}/\d{1,2}/\d{4}$', t))
+# --- XỬ LÝ LỆNH TỪ ANH HOÀN (VOICE-TO-TEXT HOẶC CHỮ) ---
+@bot.message_handler(func=lambda message: True)
+def handle_messages(message):
+    input_text = message.text.lower() if message.text else ""
+    
+    # Logic phản hồi thông minh
+    if any(word in input_text for word in ["thống kê", "bao nhiêu", "tình hình"]):
+        bot.reply_to(message, thong_ke_nhanh(), parse_mode="HTML")
+    elif "chào" in input_text or "start" in input_text:
+        bot.reply_to(message, "Chào anh Hoàn! Em là Trợ lý V3.0. Anh có thể hỏi 'thống kê' để em báo cáo nhé!")
 
-def chuyen_chuoi_thanh_ngay(txt_ngay: str):
-    try:
-        clean_txt = txt_ngay.replace("(", "").replace(")", "").strip()
-        return datetime.strptime(clean_txt, "%d/%m/%Y")
-    except ValueError:
-        return None
-
+# --- HÀM QUÉT ROBOT (SELENIUM) ---
 def chay_robot():
-    log.info("--- BẮT ĐẦU QUÉT HỆ THỐNG SỞ KH&CN V2.9 (DUAL BOT: TELE + ZALO) ---")
+    log.info("--- BẮT ĐẦU QUÉT HỆ THỐNG V3.0 ---")
     driver = None
     ds_da_gui = tai_ds_da_gui()
-    ngay_hom_nay = datetime.now() + timedelta(hours=7)
-
+    
     try:
         options = Options()
         options.add_argument("--headless")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--window-size=1920,1080")
-        options.add_argument('--ignore-certificate-errors')
-        options.add_argument('--ignore-ssl-errors')
         
         driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-        wait = WebDriverWait(driver, 30)
+        wait = WebDriverWait(driver, 20)
 
-        # 🚀 Bước 1: Đăng nhập
+        # Đăng nhập
         driver.get(URL_LOGIN)
-        wait.until(EC.presence_of_element_located((By.NAME, "Username")))
-        driver.find_element(By.NAME, "Username").send_keys(USER_NAME)
+        wait.until(EC.presence_of_element_located((By.NAME, "Username"))).send_keys(USER_NAME)
         driver.find_element(By.NAME, "Password").send_keys(PASS_WORD)
-        try:
-            driver.find_element(By.XPATH, "//input[@type='submit']").click()
-        except Exception:
-            driver.execute_script("document.forms[0].submit()")
-        time.sleep(15)
+        driver.execute_script("document.forms[0].submit()")
+        time.sleep(10)
 
-        # 🚀 Bước 2: Vào danh sách
+        # Vào danh sách văn bản đến
         driver.get(URL_DANH_SACH)
-        time.sleep(20)
-
+        time.sleep(10)
         driver.switch_to.default_content()
         wait.until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "Main")))
 
-        wait.until(EC.presence_of_element_located((By.TAG_NAME, "tr")))
         rows = driver.find_elements(By.TAG_NAME, "tr")
-
-        ds_van_ban_can_quet = []
-
-        # 🔍 LẬP DANH SÁCH TẤT CẢ VĂN BẢN MỚI
         for row in rows:
-            txt_row = row.text.strip()
-            if not txt_row or "số ký hiệu" in txt_row.lower() or "/" not in txt_row:
-                continue
-
-            parts = txt_row.split()
-            if len(parts) < 4: continue
-
-            so_hieu = ""
-            ngay_den = ""
-            trich_yeu = ""
-
-            if len(parts) > 1 and la_ngay_thang(parts[1]):
-                ngay_den = parts[1]
-
-            for i, p in enumerate(parts):
-                if "/" in p and not la_ngay_thang(p) and not so_hieu:
-                    so_hieu = p
-                    if (i + 2) < len(parts):
-                        trich_yeu = " ".join(parts[i+2:])
-                    break
-
-            if so_hieu in ds_da_gui:
-                continue
-
-            tds = row.find_elements(By.TAG_NAME, "td")
-            if tds:
-                try:
-                    the_a = tds[min(len(tds)-1, 3)].find_element(By.TAG_NAME, "a")
-                    link_chi_tiet = the_a.get_attribute("href")
-                    ds_van_ban_can_quet.append({
-                        "so_hieu": so_hieu,
-                        "ngay_den": ngay_den,
-                        "trich_yeu": trich_yeu,
-                        "link": link_chi_tiet
-                    })
-                except Exception:
-                    continue
-
-        log.info(f"📋 Tìm thấy {len(ds_van_ban_can_quet)} văn bản mới.")
-
-        # 🚀 Bước 3: Quét chi tiết và bắn tin
-        for vb in ds_van_ban_can_quet[:15]:
-            try:
-                driver.get(vb["link"])
-                time.sleep(5)
-
-                page_text = driver.find_element(By.TAG_NAME, "body").text
-                page_text_lower = page_text.lower()
-
-                han_xl_tim_thay = "Không có hạn"
-                khoang_cach_ngay = 999
-                mau_tim_ngay = r'(\b\d{1,2}/\d{1,2}/\d{4}\b)'
-
-                for match in re.finditer(mau_tim_ngay, page_text):
-                    ngay_van_ban = match.group(1)
-                    vi_tri_ngay = match.start()
-                    chu_ngu_canh = page_text_lower[max(0, vi_tri_ngay - 30):vi_tri_ngay]
+            txt = row.text.strip()
+            if not txt or "/" not in txt: continue
+            
+            # Logic tách số hiệu đơn giản
+            parts = txt.split()
+            so_hieu = next((p for p in parts if "/" in p and len(p) > 5), None)
+            
+            if so_hieu and so_hieu not in ds_da_gui:
+                msg = f"🚀 <b>CÓ VĂN BẢN MỚI</b>\n📄 Số hiệu: <code>{so_hieu}</code>\n📝 Nội dung: {txt[:100]}..."
+                if gui_telegram(msg):
+                    ds_da_gui.add(so_hieu)
+                    luu_ds_da_gui(ds_da_gui)
                     
-                    if "trước ngày" in chu_ngu_canh:
-                        doi_tuong_ngay = chuyen_chuoi_thanh_ngay(ngay_van_ban)
-                        if doi_tuong_ngay:
-                            kc = (doi_tuong_ngay.date() - ngay_hom_nay.date()).days
-                            if kc < khoang_cach_ngay:
-                                khoang_cach_ngay = kc
-                                han_xl_tim_thay = ngay_van_ban
-
-                # CHUẨN BỊ NỘI DUNG GỬI
-                khung_chu_plain = (
-                    f"🏷️ Số hiệu: {vb['so_hieu']}\n"
-                    f"📅 Ngày đến: {vb['ngay_den']}\n"
-                    f"📝 Trích yếu: {vb['trich_yeu'][:150]}...\n"
-                    f"⏳ Hạn xử lý: {han_xl_tim_thay}"
-                )
-
-                # 1. Bắn Telegram
-                thong_bao_tele = f"🚀 <b>QUÉT VĂN BẢN ĐẾN (V2.9)</b>\n"
-                if 0 < khoang_cach_ngay <= 2:
-                    thong_bao_tele += f"🚨 <b>GẤP (HẠN CÒN {khoang_cach_ngay} NGÀY)</b>\n\n{khung_chu_plain}"
-                else:
-                    thong_bao_tele += f"📋 <b>BÌNH THƯỜNG</b>\n\n{khung_chu_plain}"
-                gui_telegram(thong_bao_tele)
-
-                # 2. Bắn Zalo
-                thong_bao_zalo = f"🚀 QUÉT VĂN BẢN ĐẾN (V2.9)\n{khung_chu_plain}"
-                gui_zalo(thong_bao_zalo)
-
-                ds_da_gui.add(vb["so_hieu"])
-                luu_ds_da_gui(ds_da_gui)
-
-            except Exception as e:
-                log.error(f"❌ Lỗi quét văn bản {vb['so_hieu']}: {e}")
-
     except Exception as e:
-        log.error(f"❌ Lỗi hệ thống: {e}")
+        log.error(f"Lỗi Robot: {e}")
     finally:
-        if driver:
-            driver.quit()
+        if driver: driver.quit()
+
+# --- CHẠY SONG SONG 2 LUỒNG ---
+def robot_loop():
+    while True:
+        chay_robot()
+        time.sleep(900) # Quét mỗi 15 phút
 
 if __name__ == "__main__":
-    chay_robot()
+    # Luồng 1: Robot quét tự động
+    t1 = Thread(target=robot_loop)
+    t1.daemon = True
+    t1.start()
+    
+    # Luồng 2: Bot Telegram lắng nghe tin nhắn
+    log.info("Bot đang lắng nghe...")
+    bot.polling(none_stop=True)
