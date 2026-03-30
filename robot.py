@@ -141,32 +141,59 @@ def chay_robot():
         rows = driver.find_elements(By.TAG_NAME, "tr")
         log.info(f"Tìm thấy {len(rows)} hàng trong bảng.")
 
+        # --- DEBUG: In toàn bộ nội dung hàng đầu để xác định đúng chỉ số cột ---
+        # Chạy lần đầu xem log để biết cột nào là gì, sau đó tắt debug đi
+        DEBUG_COT = True
+        if DEBUG_COT:
+            for i, row in enumerate(rows[:5]):
+                cells = row.find_elements(By.TAG_NAME, "td")
+                if cells:
+                    log.info(f"[DEBUG] Hàng {i}: " + " | ".join(
+                        f"[{j}]{c.text.strip()[:30]}" for j, c in enumerate(cells)
+                    ))
+
+        # ----------------------------------------------------------------
+        # CHỈ SỐ CỘT — dựa trên cấu trúc thực tế hệ thống Sở KH&CN ĐB:
+        #   [0] STT
+        #   [1] Số công văn         ← dùng làm key nhận dạng trùng lặp
+        #   [2] Trích yếu / nội dung
+        #   [3] Ngày đến
+        #   [4] Hạn xử lý
+        # Nếu log DEBUG cho thấy thứ tự khác → sửa các con số dưới đây
+        # ----------------------------------------------------------------
+        COT_SO_CV   = 1
+        COT_TRICH   = 2
+        COT_NGAY    = 3
+        COT_HAN     = 4
+
         so_moi = 0
         for row in rows:
             cells = row.find_elements(By.TAG_NAME, "td")
-            if len(cells) < 2:
-                continue  # Bỏ qua hàng tiêu đề hoặc hàng rỗng
+            if len(cells) <= COT_HAN:
+                continue  # Bỏ qua hàng tiêu đề hoặc không đủ cột
 
-            # Giả sử cột đầu là số hiệu, cột 2 là trích yếu
-            # Điều chỉnh chỉ số cột nếu cấu trúc bảng khác
-            so_hieu = cells[0].text.strip()
-            trich_yeu = cells[1].text.strip() if len(cells) > 1 else ""
+            so_cv    = cells[COT_SO_CV].text.strip()
+            trich_yeu = cells[COT_TRICH].text.strip()
+            ngay_den  = cells[COT_NGAY].text.strip()
+            han_xu_ly = cells[COT_HAN].text.strip()
 
-            # Bỏ qua hàng không có số hiệu hoặc trông như tiêu đề
-            if not so_hieu or len(so_hieu) < 3 or "/" not in so_hieu:
+            # Bỏ qua hàng tiêu đề hoặc hàng rỗng
+            if not so_cv or so_cv.lower() in ("số công văn", "số cv", "số hiệu", "stt"):
                 continue
 
-            if so_hieu not in ds_da_gui:
-                log.info(f"Văn bản mới: {so_hieu}")
+            if so_cv not in ds_da_gui:
+                log.info(f"Văn bản mới: {so_cv}")
                 tin = (
                     f"📄 <b>VĂN BẢN MỚI - SỞ KH&amp;CN ĐIỆN BIÊN</b>\n"
                     f"────────────────────\n"
-                    f"📌 Số hiệu: <code>{so_hieu}</code>\n"
-                    f"📝 Trích yếu: {trich_yeu[:200]}\n"
-                    f"⏰ Phát hiện lúc: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
+                    f"📌 Số công văn: <code>{so_cv}</code>\n"
+                    f"📝 Trích yếu: {trich_yeu[:300]}\n"
+                    f"📅 Ngày đến: {ngay_den}\n"
+                    f"⏳ Hạn xử lý: <b>{han_xu_ly}</b>\n"
+                    f"⏰ Phát hiện: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
                 )
                 gui_telegram(tin)
-                ds_da_gui.add(so_hieu)
+                ds_da_gui.add(so_cv)
                 co_thay_doi = True
                 so_moi += 1
 
