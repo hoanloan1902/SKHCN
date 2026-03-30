@@ -35,7 +35,7 @@ log = logging.getLogger(__name__)
 DEBUG_COT = True
 
 # ============================================================
-# CHỈ SỐ CỘT — xem log [RAW] rồi điều chỉnh cho đúng
+# CHỈ SỐ CỘT — xem log [RAW hang=1] rồi điều chỉnh cho đúng
 # ============================================================
 COT_SO_CV  = 2
 COT_NGAY   = 3
@@ -61,24 +61,35 @@ def gui_telegram(msg: str):
 
 # ============================================================
 # QUẢN LÝ TRẠNG THÁI
+# da_gui.json lưu list dict:
+# [{"so_cv": "...", "ngay_den": "...", "trich_yeu": "...", "han_xu_ly": "..."}, ...]
 # ============================================================
-def tai_ds_da_gui() -> set:
+def tai_du_lieu() -> dict:
+    """Trả về dict {so_cv: record} để tra cứu nhanh"""
     try:
         if os.path.exists(FILE_DA_GUI):
             with open(FILE_DA_GUI, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, list):
-                    return set(data)
+                    # Hỗ trợ cả định dạng cũ (list string) lẫn mới (list dict)
+                    result = {}
+                    for item in data:
+                        if isinstance(item, dict):
+                            result[item.get("so_cv", "")] = item
+                        elif isinstance(item, str):
+                            result[item] = {"so_cv": item, "ngay_den": "", "trich_yeu": "", "han_xu_ly": ""}
+                    return result
     except Exception as e:
         log.warning(f"Không đọc được {FILE_DA_GUI}: {e}")
-    return set()
+    return {}
 
 
-def luu_ds_da_gui(ds: set):
+def luu_du_lieu(du_lieu: dict):
     try:
+        danh_sach = list(du_lieu.values())
         with open(FILE_DA_GUI, "w", encoding="utf-8") as f:
-            json.dump(sorted(list(ds)), f, ensure_ascii=False, indent=2)
-        log.info(f"Đã lưu {len(ds)} mục.")
+            json.dump(danh_sach, f, ensure_ascii=False, indent=2)
+        log.info(f"Đã lưu {len(danh_sach)} văn bản.")
     except Exception as e:
         log.error(f"Lỗi lưu file: {e}")
 
@@ -105,7 +116,7 @@ def commit_trang_thai():
 def chay_robot():
     log.info("====== BẮT ĐẦU QUÉT SỞ KH&CN ĐIỆN BIÊN ======")
     driver = None
-    ds_da_gui = tai_ds_da_gui()
+    du_lieu = tai_du_lieu()   # dict {so_cv: record}
     co_thay_doi = False
 
     try:
@@ -196,7 +207,7 @@ def chay_robot():
             if not so_cv or len(so_cv) < 3:
                 continue
 
-            if so_cv not in ds_da_gui:
+            if so_cv not in du_lieu:
                 log.info(f"VAN BAN MOI: [{so_cv}] ngay={ngay_den} han={han_xu_ly}")
                 tin = (
                     f"📄 <b>VĂN BẢN MỚI - SỞ KH&amp;CN ĐIỆN BIÊN</b>\n"
@@ -208,7 +219,13 @@ def chay_robot():
                     f"⏰ Phát hiện: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
                 )
                 gui_telegram(tin)
-                ds_da_gui.add(so_cv)
+                # Lưu đầy đủ thông tin vào dict
+                du_lieu[so_cv] = {
+                    "so_cv":     so_cv,
+                    "ngay_den":  ngay_den,
+                    "trich_yeu": trich_yeu,
+                    "han_xu_ly": han_xu_ly
+                }
                 co_thay_doi = True
                 so_moi += 1
 
@@ -222,7 +239,7 @@ def chay_robot():
             driver.quit()
 
     if co_thay_doi:
-        luu_ds_da_gui(ds_da_gui)
+        luu_du_lieu(du_lieu)
         commit_trang_thai()
     else:
         log.info("Không có thay đổi, bỏ qua commit.")
