@@ -5,7 +5,7 @@ import logging
 import requests
 import re
 from datetime import datetime
-import telebot # Thư viện pyTelegramBotAPI
+import telebot
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
@@ -14,7 +14,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
-# --- CẤU HÌNH ---
+# --- LẤY CẤU HÌNH ---
 USER_NAME = os.environ.get("SKHCN_USER", "")
 PASS_WORD = os.environ.get("SKHCN_PASS", "")
 TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
@@ -42,7 +42,7 @@ def luu_ds(du_lieu):
         json.dump(list(du_lieu.values()), f, ensure_ascii=False, indent=2)
 
 def chay_robot():
-    log.info("=== QUÉT HỆ THỐNG V3.2 (FIX NHẢY CỘT) ===")
+    log.info("=== QUÉT HỆ THỐNG V3.3 (SIÊU LỌC) ===")
     driver = None
     du_lieu = tai_ds()
     co_thay_doi = False
@@ -55,15 +55,16 @@ def chay_robot():
         driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
         
         driver.get(URL_LOGIN)
-        WebDriverWait(driver, 20).until(EC.presence_of_element_located((By.NAME, "Username"))).send_keys(USER_NAME)
+        WebDriverWait(driver, 25).until(EC.presence_of_element_located((By.NAME, "Username"))).send_keys(USER_NAME)
         driver.find_element(By.NAME, "Password").send_keys(PASS_WORD)
         driver.execute_script("document.forms[0].submit()")
-        time.sleep(7)
+        time.sleep(10)
 
         driver.get(URL_DANH_SACH)
-        time.sleep(7)
+        time.sleep(10)
         driver.switch_to.default_content()
-        try: WebDriverWait(driver, 10).until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "Main")))
+        try:
+            WebDriverWait(driver, 15).until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "Main")))
         except: pass
 
         rows = driver.find_elements(By.TAG_NAME, "tr")
@@ -71,31 +72,40 @@ def chay_robot():
             cells = [c.text.strip() for c in row.find_elements(By.TAG_NAME, "td")]
             if len(cells) < 4: continue
             
-            # --- LOGIC NHẬN DIỆN CỘT THÔNG MINH ---
-            so_hieu = ""
-            ngay_den = ""
-            trich_yeu = ""
-            han_xl = "Không có hạn"
+            # --- LOGIC NHẬN DIỆN "SIÊU LỌC" ---
+            so_hieu, ngay_den, trich_yeu, han_xl = "", "", "", "Không có"
+            ngay_list = []
 
             for cell in cells:
-                # Nếu ô chứa dấu / và không phải ngày tháng -> Số hiệu
-                if "/" in cell and not re.search(r'\d{2}/\d{2}/\d{4}', cell):
-                    so_hieu = cell
-                # Nếu ô chứa ngày tháng định dạng dd/mm/yyyy -> Ngày đến
-                elif re.search(r'\d{2}/\d{2}/\d{4}', cell):
-                    if not ngay_den: ngay_den = cell
-                    else: han_xl = cell # Ngày thứ 2 tìm thấy thường là hạn xử lý
-                # Ô dài nhất thường là Trích yếu
+                if not cell: continue
+                # 1. Tìm ngày tháng (dd/mm/yyyy)
+                if re.search(r'\d{2}/\d{2}/\d{4}', cell):
+                    ngay_list.append(cell)
+                # 2. Tìm số hiệu (có dấu / nhưng không phải ngày tháng)
+                elif "/" in cell and not re.search(r'\d{2}/\d{2}/\d{4}', cell):
+                    # Ưu tiên số hiệu có chữ hoặc số phức tạp
+                    if len(cell) > 3: so_hieu = cell
+                # 3. Tìm trích yếu (Ô dài nhất và không phải số hiệu/ngày)
                 elif len(cell) > len(trich_yeu):
                     trich_yeu = cell
 
-            if so_hieu and so_hieu not in du_lieu:
+            # Phân bổ ngày tháng tìm được
+            if len(ngay_list) >= 1: ngay_den = ngay_list[0]
+            if len(ngay_list) >= 2: han_xl = ngay_list[1]
+
+            # Kiểm tra tính hợp lệ cuối cùng
+            if so_hieu and "/" in so_hieu and so_hieu not in du_lieu:
+                # Nếu trích yếu quá ngắn hoặc trùng số hiệu, tìm lại trong các ô khác
+                if len(trich_yeu) < 10:
+                    for c in cells:
+                        if len(c) > 20: trich_yeu = c
+
                 msg = (
-                    f"🚀 <b>CÓ VĂN BẢN MỚI</b>\n"
+                    f"🚀 <b>VĂN BẢN MỚI</b>\n"
                     f"────────────────────\n"
                     f"📌 <b>Số CV:</b> <code>{so_hieu}</code>\n"
                     f"📅 <b>Ngày đến:</b> {ngay_den}\n"
-                    f"📝 <b>Trích yếu:</b> {trich_yeu[:300]}\n"
+                    f"📝 <b>Trích yếu:</b> {trich_yeu[:400]}\n"
                     f"⏳ <b>Hạn xử lý:</b> {han_xl}\n"
                     f"⏰ <i>Cập nhật: {datetime.now().strftime('%H:%M')}</i>"
                 )
@@ -108,10 +118,11 @@ def chay_robot():
             os.system('git config user.email "bot@github.com"')
             os.system('git config user.name "Robot Bot"')
             os.system(f'git add {FILE_DA_GUI}')
-            os.system('git commit -m "Update data [skip ci]"')
+            os.system('git commit -m "Update da_gui.json [skip ci]"')
             os.system('git push')
 
-    except Exception as e: log.error(f"Lỗi: {e}")
+    except Exception as e:
+        log.error(f"Lỗi: {e}")
     finally:
         if driver: driver.quit()
 
