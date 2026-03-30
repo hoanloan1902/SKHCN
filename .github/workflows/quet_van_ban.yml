@@ -1,38 +1,28 @@
-name: Quet Van Ban Den
+name: Robot Quét Văn Bản Sở KHCN
 
 on:
   schedule:
-    # Chạy mỗi 30 phút (UTC+7 thì 1:00 - 17:00 UTC = 8:00 - 24:00 giờ VN)
-    - cron: '*/30 1-17 * * 1-5'
-  workflow_dispatch:  # Cho phép chạy tay từ tab Actions
+    - cron: '*/30 * * * *' # Chạy mỗi 30 phút một lần
+  workflow_dispatch: # Cho phép anh bấm nút "Run workflow" thủ công
 
 jobs:
-  quet:
+  run-robot:
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: write  # CẦN THIẾT để commit da_gui.json ngược lại repo
-
     steps:
-      - name: Checkout repo (kèm da_gui.json từ lần trước)
-        uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Cài đặt Python
+        uses: actions/setup-python@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          python-version: '3.9'
 
-      - name: Cài Python và thư viện
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Cài thư viện cần thiết
-        run: pip install selenium webdriver-manager requests
-
-      - name: Cài Chrome (để Selenium dùng)
+      - name: Cài đặt thư viện
         run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q google-chrome-stable
+          python -m pip install --upgrade pip
+          pip install selenium webdriver-manager requests pyTelegramBotAPI
 
-      - name: Chạy robot quét văn bản
+      - name: Chạy Robot
         env:
           SKHCN_USER: ${{ secrets.SKHCN_USER }}
           SKHCN_PASS: ${{ secrets.SKHCN_PASS }}
