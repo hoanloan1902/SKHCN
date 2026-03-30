@@ -141,55 +141,71 @@ def chay_robot():
         rows = driver.find_elements(By.TAG_NAME, "tr")
         log.info(f"Tìm thấy {len(rows)} hàng trong bảng.")
 
-        # --- DEBUG: In toàn bộ nội dung hàng đầu để xác định đúng chỉ số cột ---
-        # Chạy lần đầu xem log để biết cột nào là gì, sau đó tắt debug đi
+        # --- DEBUG: In cấu trúc bảng để xác định đúng cột ---
         DEBUG_COT = True
-        if DEBUG_COT:
-            for i, row in enumerate(rows[:5]):
-                cells = row.find_elements(By.TAG_NAME, "td")
-                if cells:
-                    log.info(f"[DEBUG] Hàng {i}: " + " | ".join(
-                        f"[{j}]{c.text.strip()[:30]}" for j, c in enumerate(cells)
+        tat_ca_rows = driver.find_elements(By.TAG_NAME, "tr")
+        log.info(f"Tổng số hàng tìm được: {len(tat_ca_rows)}")
+
+        rows_hop_le = []
+        for i, row in enumerate(tat_ca_rows):
+            cells = row.find_elements(By.TAG_NAME, "td")
+            if len(cells) >= 4:
+                noi_dung = [c.text.strip() for c in cells]
+                # Lọc bỏ hàng phân trang và hàng rác
+                full_text = " ".join(noi_dung)
+                if any(k in full_text for k in ["Trang 1", "Có tổng số", "tổng số"]):
+                    continue
+                # Bỏ hàng toàn rỗng
+                if not any(noi_dung):
+                    continue
+                rows_hop_le.append((i, cells, noi_dung))
+                if DEBUG_COT and i < 8:
+                    log.info(f"[DEBUG hàng {i}] " + " | ".join(
+                        f"[{j}]{v[:25]}" for j, v in enumerate(noi_dung)
                     ))
 
+        log.info(f"Số hàng hợp lệ (sau lọc): {len(rows_hop_le)}")
+
         # ----------------------------------------------------------------
-        # CHỈ SỐ CỘT — dựa trên cấu trúc thực tế hệ thống Sở KH&CN ĐB:
+        # CHỈ SỐ CỘT — xem log DEBUG để xác nhận, điều chỉnh nếu cần
+        # Dự đoán ban đầu dựa trên hệ thống Lotus Notes điển hình:
         #   [0] STT
-        #   [1] Số công văn         ← dùng làm key nhận dạng trùng lặp
-        #   [2] Trích yếu / nội dung
-        #   [3] Ngày đến
+        #   [1] Số công văn
+        #   [2] Ngày đến
+        #   [3] Trích yếu
         #   [4] Hạn xử lý
-        # Nếu log DEBUG cho thấy thứ tự khác → sửa các con số dưới đây
         # ----------------------------------------------------------------
-        COT_SO_CV   = 1
-        COT_TRICH   = 2
-        COT_NGAY    = 3
-        COT_HAN     = 4
+        COT_SO_CV  = 1
+        COT_NGAY   = 2
+        COT_TRICH  = 3
+        COT_HAN    = 4
 
         so_moi = 0
-        for row in rows:
-            cells = row.find_elements(By.TAG_NAME, "td")
-            if len(cells) <= COT_HAN:
-                continue  # Bỏ qua hàng tiêu đề hoặc không đủ cột
+        for (i, cells, noi_dung) in rows_hop_le:
+            if len(noi_dung) <= COT_HAN:
+                continue
 
-            so_cv    = cells[COT_SO_CV].text.strip()
-            trich_yeu = cells[COT_TRICH].text.strip()
-            ngay_den  = cells[COT_NGAY].text.strip()
-            han_xu_ly = cells[COT_HAN].text.strip()
+            so_cv     = noi_dung[COT_SO_CV]
+            ngay_den  = noi_dung[COT_NGAY]
+            trich_yeu = noi_dung[COT_TRICH]
+            han_xu_ly = noi_dung[COT_HAN]
 
-            # Bỏ qua hàng tiêu đề hoặc hàng rỗng
-            if not so_cv or so_cv.lower() in ("số công văn", "số cv", "số hiệu", "stt"):
+            # Bỏ tiêu đề cột
+            if not so_cv or so_cv.lower() in ("số công văn", "số cv", "số hiệu", "stt", ""):
+                continue
+            # Bỏ hàng không có dấu hiệu số công văn thực
+            if len(so_cv) < 3:
                 continue
 
             if so_cv not in ds_da_gui:
-                log.info(f"Văn bản mới: {so_cv}")
+                log.info(f"Văn bản mới: [{so_cv}] | Ngày: {ngay_den} | Hạn: {han_xu_ly}")
                 tin = (
                     f"📄 <b>VĂN BẢN MỚI - SỞ KH&amp;CN ĐIỆN BIÊN</b>\n"
                     f"────────────────────\n"
-                    f"📌 Số công văn: <code>{so_cv}</code>\n"
-                    f"📝 Trích yếu: {trich_yeu[:300]}\n"
-                    f"📅 Ngày đến: {ngay_den}\n"
-                    f"⏳ Hạn xử lý: <b>{han_xu_ly}</b>\n"
+                    f"📌 <b>Số công văn:</b> <code>{so_cv}</code>\n"
+                    f"📝 <b>Trích yếu:</b> {trich_yeu[:300]}\n"
+                    f"📅 <b>Ngày đến:</b> {ngay_den}\n"
+                    f"⏳ <b>Hạn xử lý:</b> {han_xu_ly}\n"
                     f"⏰ Phát hiện: {datetime.now().strftime('%d/%m/%Y %H:%M')}"
                 )
                 gui_telegram(tin)
