@@ -4,13 +4,14 @@ import gspread
 import telebot
 import requests
 import urllib3
+import time
 from bs4 import BeautifulSoup
 from oauth2client.service_account import ServiceAccountCredentials
 
-# Tắt cảnh báo bảo mật SSL khi quét web Sở
+# Tắt cảnh báo SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- CẤU HÌNH BIẾN MÔI TRƯỜNG ---
+# --- CẤU HÌNH ---
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GOOGLE_JSON = os.environ.get("GSPREAD_SERVICE_ACCOUNT")
 CHAT_ID = os.environ.get("CHAT_ID")
@@ -24,38 +25,43 @@ def ket_noi_sheets():
         creds_dict = json.loads(GOOGLE_JSON)
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        # Mở Sheet1 của file DANH_SACH_VAN_BAN
-        return client.open(SHEET_NAME).worksheet("Sheet1")
+        return client.open(SHEET_NAME).sheet1
     except Exception as e:
-        print(f"❌ Lỗi kết nối Google Sheets: {e}")
+        print(f"❌ Lỗi Sheets: {e}")
         return None
 
 def quet_web_so_khcn():
     url = "https://sokhcn.dienbien.gov.vn/van-ban"
-    print(f"🌍 Đang quét website Sở KH&CN: {url}")
-    ds_van_ban = []
-    try:
-        # Gửi yêu cầu lấy dữ liệu từ web
-        response = requests.get(url, timeout=30, verify=False)
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # Tìm bảng danh sách văn bản (Dựa trên cấu trúc web NukeViet của Sở)
-        table = soup.find('table') 
-        if not table: return []
-
-        rows = table.find_all('tr')[1:] # Bỏ hàng tiêu đề
-        for row in rows:
-            cols = row.find_all('td')
-            if len(cols) >= 4:
-                so_hieu = cols[1].text.strip()    # Cột 2: Số hiệu
-                ngay_ban = cols[2].text.strip()   # Cột 3: Ngày ban hành
-                trich_yeu = cols[3].text.strip()  # Cột 4: Trích yếu nội dung
-                ds_van_ban.append([so_hieu, ngay_ban, trich_yeu])
-        
-        return ds_van_ban
-    except Exception as e:
-        print(f"❌ Lỗi khi đọc dữ liệu web: {e}")
-        return []
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    print(f"🌍 Đang kết nối tới: {url}")
+    
+    # Thử lại tối đa 3 lần nếu lỗi mạng
+    for i in range(3):
+        try:
+            response = requests.get(url, headers=headers, timeout=30, verify=False)
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.content, 'html.parser')
+                ds_van_ban = []
+                
+                # Tìm tất cả các dòng trong bảng
+                rows = soup.find_all('tr')
+                for row in rows:
+                    cols = row.find_all('td')
+                    if len(cols) >= 4:
+                        so_hieu = cols[1].get_text(strip=True)
+                        ngay_ban = cols[2].get_text(strip=True)
+                        noi_dung = cols[3].get_text(strip=True)
+                        
+                        # Chỉ lấy nếu dòng đó có số hiệu (loại bỏ tiêu đề)
+                        if so_hieu and so_hieu != "Số hiệu":
+                            ds_van_ban.append([so_hieu, ngay_ban, noi_dung])
+                return ds_van_ban
+        except Exception as e:
+            print(f"⚠️ Lần thử {i+1} thất bại, đang thử lại... ({e})")
+            time.sleep(5)
+    return []
 
 if __name__ == "__main__":
     print("🚀 Robot bắt đầu chu kỳ làm việc...")
@@ -64,26 +70,30 @@ if __name__ == "__main__":
     if sheet:
         danh_sach_moi = quet_web_so_khcn()
         if not danh_sach_moi:
-            print("📭 Không tìm thấy văn bản nào mới trên web.")
+            print("📭 Không lấy được dữ liệu. Có thể web Sở đang bảo trì.")
         else:
-            # Lấy danh sách số hiệu đã có trong file Excel để đối chiếu
-            so_hieu_da_co = sheet.col_values(1)
+            # Lấy 20 số hiệu gần nhất trong Sheets để so sánh
+            so_hieu_da_co = sheet.col_values(1)[:20]
             
-            # Duyệt qua các văn bản mới quét được
-            for vb in reversed(danh_sach_moi): # Đảo ngược để lưu cái cũ trước, cái mới sau
+            moi_them = 0
+            for vb in reversed(danh_sach_moi):
                 if vb[0] not in so_hieu_da_co:
-                    # Ghi vào file Excel
-                    sheet.append_row(vb)
+                    sheet.insert_row(vb, 2) # Chèn vào dòng thứ 2 (dưới tiêu đề)
                     
-                    # Gửi tin nhắn về Telegram cho anh Hoàn
-                    thong_bao = (
-                        f"🔔 **CÓ VĂN BẢN MỚI TỪ SỞ KH&CN!**\n\n"
-                        f"📌 **Số hiệu:** `{vb[0]}`\n"
-                        f"📅 **Ngày ban hành:** {vb[1]}\n"
-                        f"📝 **Nội dung:** {vb[2]}\n\n"
-                        f"🔗 Xem tại: https://sokhcn.dienbien.gov.vn/van-ban"
-                    )
-                    bot.send_message(CHAT_ID, thong_bao, parse_mode="Markdown")
-                    print(f"✅ Đã báo cáo văn bản: {vb[0]}")
+                    msg = (f"🔔 **CÓ VĂN BẢN MỚI!**\n\n"
+                           f"📌 **Số:** `{vb[0]}`\n"
+                           f"📅 **Ngày:** {vb[1]}\n"
+                           f"📝 **ND:** {vb[2]}")
+                    
+                    try:
+                        bot.send_message(CHAT_ID, msg, parse_mode="Markdown")
+                        print(f"✅ Đã báo cáo: {vb[0]}")
+                        moi_them += 1
+                        time.sleep(1) # Tránh bị Telegram chặn do gửi nhanh
+                    except Exception as e:
+                        print(f"❌ Lỗi gửi Telegram: {e}")
 
-    print("🏁 Robot đã hoàn thành công việc và đang ở trạng thái chờ.")
+            if moi_them == 0:
+                print("☕ Không có văn bản nào mới hơn.")
+    
+    print("🏁 Robot đã hoàn thành công việc.")
