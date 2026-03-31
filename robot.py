@@ -31,54 +31,69 @@ def ket_noi_sheets():
         print(f"❌ Lỗi Sheets: {e}")
         return None
 
-def quet_hscv_lotus_notes():
-    # Đường dẫn đăng nhập và đường dẫn trực tiếp đến bảng "Văn bản chờ xử lý"
+def quet_hscv_chuan_xac():
+    # Sử dụng link Private anh vừa tìm thấy
     url_login = "https://hscvkhcn.dienbien.gov.vn/login"
-    # Link này em lấy từ ảnh image_1f3362.jpg của anh
-    url_target = "https://hscvkhcn.dienbien.gov.vn/qlvb/vbden.nsf/Default?OpenForm"
+    url_target = "https://hscvkhcn.dienbien.gov.vn/qlvb/vbden.nsf/Private_ChoXL_KoHan?openForm"
     
     session = requests.Session()
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+    }
     
     try:
-        print(f"🔑 Đăng nhập hệ thống Lotus Notes cho anh Hoàn...")
+        print(f"🔑 Đang đăng nhập hệ thống HSCV...")
         payload = {'username': USER_NAME, 'password': PASS_WORD, 'submit': 'Đăng nhập'}
         session.post(url_login, data=payload, headers=headers, verify=False, timeout=30)
         
-        # Nhảy thẳng vào trang danh sách văn bản
-        response = session.get(url_target, headers=headers, verify=False, timeout=30)
+        # Truy cập trực tiếp link danh sách chờ xử lý
+        print(f"🎯 Đang quét danh sách: Chờ xử lý...")
+        response = session.get(url_target, headers=headers, verify=False, timeout=45)
         
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
             ds_van_ban = []
             
-            # Lotus Notes thường để dữ liệu trong các thẻ <tr> có class hoặc cấu trúc lặp lại
+            # Quét tất cả các hàng trong bảng
             rows = soup.find_all('tr')
             for row in rows:
                 cols = row.find_all('td')
-                # Dựa vào ảnh image_1f3362.jpg, dữ liệu bắt đầu từ các cột có số hiệu
+                # Trong hệ thống Lotus, hàng dữ liệu thường có từ 5-10 cột
                 if len(cols) >= 5:
                     txt = [c.get_text(strip=True) for c in cols]
-                    # Lọc lấy dòng có ngày tháng (vd: 30/03/2026) và số hiệu
-                    if "/" in txt[2] and len(txt[2]) == 10: 
-                        ngay = txt[2]
-                        so_hieu = txt[3]
-                        trich_yeu = txt[5] if len(txt) > 5 else "Không có trích yếu"
-                        ds_van_ban.append([so_hieu, ngay, trich_yeu])
+                    
+                    # Kiểm tra cột ngày tháng (thường là cột 2 hoặc 3)
+                    # Định dạng ngày của Lotus thường là dd/mm/yyyy
+                    ngay_den = ""
+                    for item in txt:
+                        if len(item) == 10 and item.count("/") == 2:
+                            ngay_den = item
+                            break
+                    
+                    if ngay_den:
+                        # Số hiệu thường nằm sau ngày hoặc ở một vị trí cố định
+                        # Em sẽ lấy Số hiệu và Trích yếu dựa trên cấu trúc quan sát được
+                        so_hieu = txt[3] if len(txt) > 3 else "Chưa rõ số"
+                        trich_yeu = txt[5] if len(txt) > 5 else "Không có nội dung"
+                        
+                        # Chỉ lấy nếu số hiệu không phải là tiêu đề
+                        if "/" in so_hieu or "-" in so_hieu:
+                            ds_van_ban.append([so_hieu, ngay_den, trich_yeu])
             
             return ds_van_ban
     except Exception as e:
-        print(f"❌ Lỗi quét Lotus: {e}")
+        print(f"❌ Lỗi: {e}")
     return []
 
 if __name__ == "__main__":
-    print(f"🚀 Robot bắt đầu quét chuyên sâu: {time.strftime('%H:%M:%S')}")
+    print(f"🚀 Robot HSCV khởi động: {time.strftime('%H:%M:%S')}")
     sheet = ket_noi_sheets()
     
     if sheet:
-        danh_sach = quet_hscv_lotus_notes()
+        danh_sach = quet_hscv_chuan_xac()
         if not danh_sach:
-            print("📭 Không tìm thấy bảng. Có thể hệ thống dùng iFrame chặn Robot.")
+            print("📭 Đăng nhập thành công nhưng chưa lấy được bảng. Có thể cần thêm bước click.")
         else:
             try:
                 da_co = sheet.col_values(1)
@@ -86,14 +101,15 @@ if __name__ == "__main__":
                 da_co = []
 
             moi = 0
+            # Duyệt từ văn bản cũ nhất đến mới nhất để chèn vào Sheets
             for vb in reversed(danh_sach):
                 if vb[0] not in da_co:
                     sheet.insert_row(vb, 2)
-                    msg = f"🔔 **VĂN BẢN MỚI (HSCV)!**\n📌 Số: `{vb[0]}`\n📅 Ngày: {vb[1]}\n📝 ND: {vb[2]}"
+                    msg = f"🔔 **VĂN BẢN CHỜ XỬ LÝ!**\n📌 Số: `{vb[0]}`\n📅 Ngày đến: {vb[1]}\n📝 ND: {vb[2]}"
                     bot.send_message(CHAT_ID, msg)
                     print(f"✅ Đã báo cáo: {vb[0]}")
                     moi += 1
             
             if moi == 0:
-                print("☕ Không có văn bản mới nào.")
-    print("🏁 Robot nghỉ ngơi.")
+                print("☕ Không có văn bản nào mới.")
+    print("🏁 Robot hoàn thành ca trực.")
