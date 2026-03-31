@@ -1,78 +1,71 @@
-import time
 import os
 import json
-import re
 import gspread
-from datetime import datetime
 import telebot
 from oauth2client.service_account import ServiceAccountCredentials
+from datetime import datetime
 
-# --- CẤU HÌNH ---
-TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
-GOOGLE_JSON = os.environ.get("GSPREAD_SERVICE_ACCOUNT", "")
+# --- CẤU HÌNH BIẾN MÔI TRƯỜNG (Lấy từ Github Secrets) ---
+TOKEN = os.environ.get("TELEGRAM_TOKEN")
+GOOGLE_JSON = os.environ.get("GSPREAD_SERVICE_ACCOUNT")
+# Tên file Google Sheets anh đã tạo trong ảnh image_054674.png
+SHEET_NAME = "DANH_SACH_VAN_BAN" 
 
 bot = telebot.TeleBot(TOKEN)
 
 def ket_noi_sheets():
     try:
+        # Giải mã JSON từ Secret Github
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(GOOGLE_JSON), scope)
-        return gspread.authorize(creds).open("DANH_SACH_VAN_BAN").sheet1
-    except: return None
+        creds_dict = json.loads(GOOGLE_JSON)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        return client.open(SHEET_NAME).sheet1
+    except Exception as e:
+        print(f"Lỗi kết nối Sheets: {e}")
+        return None
 
-# --- BỘ NÃO XỬ LÝ KỊCH BẢN THÔNG MINH ---
-@bot.message_handler(func=lambda message: True)
-def handle_assistant(message):
-    txt = message.text.lower().strip()
+def luu_van_ban_moi(so_hieu, ngay, noi_dung):
     sheet = ket_noi_sheets()
-    if not sheet: return
+    if sheet:
+        # Kiểm tra xem số hiệu đã tồn tại chưa để tránh trùng
+        existing_ids = sheet.col_values(1)
+        if so_hieu not in existing_ids:
+            sheet.append_row([so_hieu, ngay, noi_dung])
+            return True
+    return False
+
+# --- PHẦN XỬ LÝ TIN NHẮN TỪ ANH HOÀN ---
+@bot.message_handler(func=lambda message: True)
+def reply_assistant(message):
+    txt = message.text.lower()
+    sheet = ket_noi_sheets()
     
-    all_data = sheet.get_all_values()[1:] # Bỏ tiêu đề
-    all_data.reverse() # Cái mới nhất lên đầu
-    today_str = datetime.now().strftime("%d/%m/%Y")
+    if "liệt kê" in txt or "danh sách" in txt:
+        if not sheet:
+            bot.reply_to(message, "❌ Robot chưa kết nối được với Google Sheets. Anh kiểm tra lại Secret nhé!")
+            return
+            
+        data = sheet.get_all_values()[1:] # Bỏ hàng tiêu đề
+        if not data:
+            bot.reply_to(message, "📭 Hiện tại chưa có văn bản nào trong danh sách anh ạ.")
+            return
 
-    # 1. KỊCH BẢN: TÌM KIẾM THEO ĐƠN VỊ/NỘI DUNG (Ví dụ: "văn bản ủy ban", "tìm sở tài chính")
-    # Đây là phần giải quyết lỗi trong ảnh image_04e55a.png của anh
-    keywords_tim = ["liệt kê các văn bản", "tìm văn bản", "lọc văn bản", "văn bản của"]
-    is_searching = any(k in txt for k in keywords_tim) or (len(txt.split()) > 2 and "văn bản" in txt)
+        # Lọc theo từ khóa (Ví dụ: "ủy ban")
+        query = txt.replace("liệt kê", "").replace("văn bản", "").strip()
+        results = [r for r in data if query in r[2].lower() or query in r[0].lower()] if query else data[-10:]
 
-    if is_searching and not re.search(r'\d+', txt): # Nếu không hỏi số lượng mà hỏi chữ
-        # Trích xuất từ khóa tìm kiếm (bỏ các từ thừa)
-        query = txt.replace("liệt kê","").replace("các","").replace("văn bản","").replace("của","").replace("tìm","").strip()
+        msg = f"📋 **KẾT QUẢ CHO: {query.upper() if query else '10 CÁI MỚI NHẤT'}**\n\n"
+        for r in results[-10:]: # Hiện 10 cái gần nhất
+            msg += f"📌 `{r[0]}` | 📅 {r[1]}\n📝 {r[2][:100]}...\n\n"
         
-        results = [r for r in all_data if query in r[2].lower() or query in r[0].lower()]
-        
-        if results:
-            msg = f"🔎 **KẾT QUẢ TÌM KIẾM: '{query.upper()}'**\n(Tìm thấy {len(results)} văn bản)\n\n"
-            for r in results[:10]: # Hiện tối đa 10 cái gần nhất cho đỡ loãng
-                msg += f"✅ `{r[0]}` | {r[1]}\n📝 {r[2][:120]}...\n\n"
-            bot.reply_to(message, msg, parse_mode="Markdown")
-        else:
-            bot.reply_to(message, f"🔎 Em đã rà soát nhưng chưa thấy văn bản nào liên quan đến '{query}' ạ.")
-        return
-
-    # 2. KỊCH BẢN: LẤY SỐ LƯỢNG (Ví dụ: "Liệt kê 20 văn bản")
-    match_num = re.search(r'(\d+)', txt)
-    if match_num and any(k in txt for k in ["liệt kê", "danh sách", "hiện", "xem"]):
-        n = int(match_num.group(1))
-        results = all_data[:n]
-        msg = f"📋 **DANH SÁCH {len(results)} VĂN BẢN MỚI NHẤT**\n\n"
-        for r in results:
-            msg += f"📌 `{r[0]}` | {r[1]}\n📝 {r[2][:150]}...\n\n"
-        
-        if len(msg) > 4000:
-            for i in range(0, len(msg), 4000): bot.send_message(message.chat.id, msg[i:i+4000], parse_mode="Markdown")
-        else: bot.reply_to(message, msg, parse_mode="Markdown")
-        return
-
-    # 3. KỊCH BẢN: THỐNG KÊ NHANH
-    if any(k in txt for k in ["bao nhiêu", "thống kê", "tổng"]):
-        count_today = len([r for r in all_data if today_str in r[1]])
-        bot.reply_to(message, f"📊 **THỐNG KÊ VĂN BẢN**\n✅ Tổng số đã nhận: **{len(all_data)}**\n📅 Hôm nay mới về: **{count_today}** cái.")
-        return
-
-    bot.reply_to(message, "🤖 Em chưa hiểu rõ. Anh thử nhắn: 'Liệt kê văn bản ủy ban', 'Danh sách 10 cái' hoặc 'Sáng nay có gì' nhé!")
+        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+    else:
+        bot.reply_to(message, "🤖 Em đang trực! Anh muốn xem danh sách gì cứ bảo em nhé.")
 
 if __name__ == "__main__":
-    print("Trợ lý văn bản đến đang trực tuyến...")
+    # Đây là phần để Github Actions chạy quét văn bản tự động
+    # Giả sử anh có đoạn code quét web ở đây, hãy gọi hàm luu_van_ban_moi()
+    print("Robot đang hoạt động...")
+    # Nếu chạy trên Github Actions thì không dùng bot.polling, chỉ dùng để test tin nhắn
     bot.polling(none_stop=True)
