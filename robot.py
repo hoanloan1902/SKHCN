@@ -1,52 +1,3 @@
-import os
-import json
-import gspread
-import telebot
-import requests
-import urllib3
-import time
-import re
-from bs4 import BeautifulSoup
-from oauth2client.service_account import ServiceAccountCredentials
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-# --- CAU HINH ---
-USER_NAME = os.environ.get("SKHCN_USER")
-PASS_WORD = os.environ.get("SKHCN_PASS")
-TOKEN = os.environ.get("TELEGRAM_TOKEN")
-GOOGLE_JSON = os.environ.get("GSPREAD_SERVICE_ACCOUNT")
-CHAT_ID = os.environ.get("CHAT_ID")
-SHEET_NAME = "DANH_SACH_VAN_BAN"
-
-print(f"🔍 Kiem tra bien:")
-print(f"   USER    = {'OK' if USER_NAME else 'MISSING'}")
-print(f"   PASS    = {'OK' if PASS_WORD else 'MISSING'}")
-print(f"   TOKEN   = {'OK' if TOKEN else 'MISSING'}")
-print(f"   CHAT_ID = {'OK' if CHAT_ID else 'MISSING'}")
-print(f"   GOOGLE  = {'OK' if GOOGLE_JSON else 'MISSING'}")
-
-if not TOKEN:
-    print("TELEGRAM_TOKEN chua duoc set!")
-    exit(1)
-
-bot = telebot.TeleBot(TOKEN)
-
-def ket_noi_sheets():
-    if not GOOGLE_JSON:
-        print("GSPREAD chua set!")
-        return None
-    try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds_dict = json.loads(GOOGLE_JSON)
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        client = gspread.authorize(creds)
-        print("Ket noi Sheets OK!")
-        return client.open(SHEET_NAME).sheet1
-    except Exception as e:
-        print(f"Loi Sheets: {e}")
-        return None
-
 def quet_lotus_v18():
     base_url   = "https://hscvkhcn.dienbien.gov.vn"
     url_login  = f"{base_url}/qlvb/index.nsf/default?openform"
@@ -64,6 +15,31 @@ def quet_lotus_v18():
         'Origin': base_url,
         'Referer': url_login,
     }
+
+    def parse_trang(html):
+        """Tach van ban tu 1 trang HTML"""
+        soup = BeautifulSoup(html, 'html.parser')
+        ket_qua = []
+        rows = soup.find_all('tr')
+        for row in rows:
+            tds = row.find_all('td')
+            if len(tds) < 5:
+                continue
+            cols = [re.sub(r'\s+', ' ', td.get_text()).strip() for td in tds]
+            so_den = ngay_den = so_hieu = co_quan = trich_yeu = ""
+            for i, c in enumerate(cols):
+                if re.match(r'^\d{2}/\d{2}/\d{4}$', c):
+                    ngay_den  = c
+                    so_den    = cols[i-1] if i >= 1 else ""
+                    so_hieu   = cols[i+1] if i+1 < len(cols) else ""
+                    co_quan   = cols[i+2] if i+2 < len(cols) else ""
+                    trich_yeu = cols[i+3] if i+3 < len(cols) else ""
+                    break
+            if ngay_den and so_hieu and re.search(r'\d+', so_den):
+                so_hieu_clean = so_hieu.strip()
+                if so_hieu_clean and '/' in so_hieu_clean:
+                    ket_qua.append([so_hieu_clean, ngay_den, trich_yeu[:200], co_quan, so_den])
+        return ket_qua
 
     try:
         print("[B1] Lay cookie...")
@@ -84,35 +60,46 @@ def quet_lotus_v18():
             return []
         print("Dang nhap thanh cong!")
 
-        print("[B3] Lay danh sach van ban...")
-        response = session.get(url_target, headers=headers_get, verify=False, timeout=25)
-        print(f"   Status: {response.status_code}")
-
-        soup = BeautifulSoup(response.text, 'html.parser')
         ds_van_ban = []
-        rows = soup.find_all('tr')
+        trang = 1
 
-        for row in rows:
-            tds = row.find_all('td')
-            if len(tds) < 5:
-                continue
-            cols = [re.sub(r'\s+', ' ', td.get_text()).strip() for td in tds]
-            so_den = ngay_den = so_hieu = co_quan = trich_yeu = ""
-            for i, c in enumerate(cols):
-                if re.match(r'^\d{2}/\d{2}/\d{4}$', c):
-                    ngay_den  = c
-                    so_den    = cols[i-1] if i >= 1 else ""
-                    so_hieu   = cols[i+1] if i+1 < len(cols) else ""
-                    co_quan   = cols[i+2] if i+2 < len(cols) else ""
-                    trich_yeu = cols[i+3] if i+3 < len(cols) else ""
-                    break
-            if ngay_den and so_hieu and re.search(r'\d+', so_den):
-                so_hieu_clean = so_hieu.strip()
-                if so_hieu_clean and '/' in so_hieu_clean:
-                    ds_van_ban.append([so_hieu_clean, ngay_den, trich_yeu[:200], co_quan, so_den])
+        while True:
+            if trang == 1:
+                url_trang = url_target
+            else:
+                url_trang = f"{url_target}&Start={((trang-1)*20)+1}"
 
-        print(f"Parse xong: {len(ds_van_ban)} van ban")
-        return ds_van_ban
+            print(f"[B3] Lay trang {trang}...")
+            response = session.get(url_trang, headers=headers_get, verify=False, timeout=25)
+            print(f"   Status: {response.status_code}")
+
+            vb_trang = parse_trang(response.text)
+            print(f"   Tim thay {len(vb_trang)} van ban trang {trang}")
+
+            if not vb_trang:
+                print(f"   Trang {trang} rong, dung lai.")
+                break
+
+            ds_van_ban.extend(vb_trang)
+
+            # Kiem tra con trang tiep theo khong
+            if f'Start={((trang)*20)+1}' not in response.text and trang > 1:
+                break
+            if trang >= 10:  # Gioi han toi da 10 trang de tranh vo han
+                break
+
+            trang += 1
+
+        # Loai bo trung lap
+        seen = set()
+        ds_unique = []
+        for vb in ds_van_ban:
+            if vb[0] not in seen:
+                seen.add(vb[0])
+                ds_unique.append(vb)
+
+        print(f"Tong cong: {len(ds_unique)} van ban (sau khi loai trung)")
+        return ds_unique
 
     except requests.exceptions.ConnectionError as e:
         print(f"Loi ket noi: {e}")
@@ -121,47 +108,3 @@ def quet_lotus_v18():
     except Exception as e:
         print(f"Loi: {e}")
     return []
-
-if __name__ == "__main__":
-    print(f"Robot bat dau: {time.strftime('%H:%M:%S')}")
-    sheet = ket_noi_sheets()
-
-    if sheet:
-        danh_sach = quet_lotus_v18()
-        if not danh_sach:
-            print("Khong lay duoc du lieu.")
-        else:
-            print(f"Tim thay {len(danh_sach)} van ban!")
-            try:
-                da_co = sheet.col_values(1)
-            except Exception as e:
-                print(f"Loi doc Sheets: {e}")
-                da_co = []
-
-            moi = 0
-            for vb in reversed(danh_sach):
-                if vb[0] not in da_co:
-                    try:
-                        sheet.insert_row(vb, 2)
-                        msg = (
-                            f"*VAN BAN MOI!*\n"
-                            f"So hieu: `{vb[0]}`\n"
-                            f"Ngay: {vb[1]}\n"
-                            f"Co quan: {vb[3]}\n"
-                            f"Trich yeu: {vb[2]}"
-                        )
-                        bot.send_message(CHAT_ID, msg, parse_mode='Markdown')
-                        print(f"Da bao: {vb[0]}")
-                        moi += 1
-                        time.sleep(1)
-                    except Exception as e:
-                        print(f"Loi luu/gui: {e}")
-
-            if moi == 0:
-                print("Khong co van ban moi.")
-            else:
-                print(f"Da gui {moi} thong bao.")
-    else:
-        print("Khong ket noi duoc Sheets.")
-
-    print(f"Ket thuc: {time.strftime('%H:%M:%S')}")
