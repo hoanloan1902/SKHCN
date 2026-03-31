@@ -1,9 +1,9 @@
-name: Robot Quet Van Ban Tu Dong
+name: Robot Quet Van Ban So KHCN Dien Bien
 
 on:
   schedule:
-    - cron: '0 * * * *' # Tu dong chay moi 1 tieng
-  workflow_dispatch: # Cho phep anh bam nut chay thu cong
+    - cron: '0 * * * *' # Chạy tự động mỗi giờ một lần
+  workflow_dispatch: # Nút bấm chạy thủ công
 
 jobs:
   build:
@@ -26,5 +26,5 @@ jobs:
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           GSPREAD_SERVICE_ACCOUNT: ${{ secrets.GSPREAD_SERVICE_ACCOUNT }}
-          CHAT_ID: ${{ secrets.CHAT_ID }} # ID Telegram cua anh de nhan tin nhan
+          CHAT_ID: ${{ secrets.CHAT_ID }}
         run: python robot.py
