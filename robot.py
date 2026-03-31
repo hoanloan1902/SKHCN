@@ -1,130 +1,30 @@
-import time
-import os
-import json
-import logging
-import requests
-import re
 from datetime import datetime
-import telebot
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
 
-# --- LẤY CẤU HÌNH ---
-USER_NAME = os.environ.get("SKHCN_USER", "")
-PASS_WORD = os.environ.get("SKHCN_PASS", "")
-TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
-CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
-URL_LOGIN = "https://hscvkhcn.dienbien.gov.vn/names.nsf?Login"
-URL_DANH_SACH = "https://hscvkhcn.dienbien.gov.vn/qlvb/vbden.nsf/default?openform&frm=Private_ChoXL?openForm"
-
-bot = telebot.TeleBot(TOKEN)
-FILE_DA_GUI = "da_gui.json"
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-log = logging.getLogger(__name__)
-
-def tai_ds():
-    try:
-        if os.path.exists(FILE_DA_GUI):
-            with open(FILE_DA_GUI, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return {item['so_cv']: item for item in data if isinstance(item, dict)}
-    except: pass
-    return {}
-
-def luu_ds(du_lieu):
-    with open(FILE_DA_GUI, "w", encoding="utf-8") as f:
-        json.dump(list(du_lieu.values()), f, ensure_ascii=False, indent=2)
-
-def chay_robot():
-    log.info("=== QUÉT HỆ THỐNG V3.3 (SIÊU LỌC) ===")
-    driver = None
-    du_lieu = tai_ds()
-    co_thay_doi = False
+def loc_van_ban_thong_minh(text, data_rows):
+    today = datetime.now().strftime("%d/%m/%Y")
+    txt = text.lower()
     
-    try:
-        options = Options()
-        options.add_argument("--headless")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-        
-        driver.get(URL_LOGIN)
-        WebDriverWait(driver, 25).until(EC.presence_of_element_located((By.NAME, "Username"))).send_keys(USER_NAME)
-        driver.find_element(By.NAME, "Password").send_keys(PASS_WORD)
-        driver.execute_script("document.forms[0].submit()")
-        time.sleep(10)
+    # --- 1. Lọc theo thời gian (Hôm nay/Sáng nay) ---
+    if any(k in txt for k in ["hôm nay", "sáng nay", "mới về"]):
+        results = [r for r in data_rows if today in r[1]] # r[1] là cột Ngày đến
+        if not results: return "Sáng nay chưa có văn bản mới nào về hệ thống anh ạ."
+        msg = f"📅 **Sáng nay có {len(results)} văn bản mới:**\n"
+        for r in results: msg += f"• {r[0]}: {r[2][:80]}...\n"
+        return msg
 
-        driver.get(URL_DANH_SACH)
-        time.sleep(10)
-        driver.switch_to.default_content()
-        try:
-            WebDriverWait(driver, 15).until(EC.frame_to_be_available_and_switch_to_it((By.NAME, "Main")))
-        except: pass
+    # --- 2. Lọc xử lý GẤP (Check từ khóa mạnh) ---
+    if any(k in txt for k in ["gấp", "khẩn", "hỏa tốc"]):
+        keywords_gap = ["hỏa tốc", "khẩn", "gấp", "hạn", "trước ngày"]
+        results = [r for r in data_rows if any(k in r[2].lower() for k in keywords_gap)]
+        if not results: return "Hiện em không thấy văn bản nào ghi chú xử lý gấp anh nhé."
+        msg = "🚨 **DANH SÁCH XỬ LÝ GẤP:**\n"
+        for r in results: msg += f"⚠️ {r[0]}: {r[2][:100]}\n"
+        return msg
 
-        rows = driver.find_elements(By.TAG_NAME, "tr")
-        for row in rows:
-            cells = [c.text.strip() for c in row.find_elements(By.TAG_NAME, "td")]
-            if len(cells) < 4: continue
-            
-            # --- LOGIC NHẬN DIỆN "SIÊU LỌC" ---
-            so_hieu, ngay_den, trich_yeu, han_xl = "", "", "", "Không có"
-            ngay_list = []
+    # --- 3. Thống kê chưa xử lý ---
+    if "chưa xử lý" in txt or "tồn" in txt:
+        # Giả định cột r[3] là trạng thái, nếu chưa có mình check theo logic riêng
+        results = [r for r in data_rows if "chờ xử lý" in r[2].lower() or "chưa" in r[2].lower()]
+        return f"⏳ Anh còn khoảng **{len(results)}** văn bản đang ở trạng thái chờ xử lý ạ."
 
-            for cell in cells:
-                if not cell: continue
-                # 1. Tìm ngày tháng (dd/mm/yyyy)
-                if re.search(r'\d{2}/\d{2}/\d{4}', cell):
-                    ngay_list.append(cell)
-                # 2. Tìm số hiệu (có dấu / nhưng không phải ngày tháng)
-                elif "/" in cell and not re.search(r'\d{2}/\d{2}/\d{4}', cell):
-                    # Ưu tiên số hiệu có chữ hoặc số phức tạp
-                    if len(cell) > 3: so_hieu = cell
-                # 3. Tìm trích yếu (Ô dài nhất và không phải số hiệu/ngày)
-                elif len(cell) > len(trich_yeu):
-                    trich_yeu = cell
-
-            # Phân bổ ngày tháng tìm được
-            if len(ngay_list) >= 1: ngay_den = ngay_list[0]
-            if len(ngay_list) >= 2: han_xl = ngay_list[1]
-
-            # Kiểm tra tính hợp lệ cuối cùng
-            if so_hieu and "/" in so_hieu and so_hieu not in du_lieu:
-                # Nếu trích yếu quá ngắn hoặc trùng số hiệu, tìm lại trong các ô khác
-                if len(trich_yeu) < 10:
-                    for c in cells:
-                        if len(c) > 20: trich_yeu = c
-
-                msg = (
-                    f"🚀 <b>VĂN BẢN MỚI</b>\n"
-                    f"────────────────────\n"
-                    f"📌 <b>Số CV:</b> <code>{so_hieu}</code>\n"
-                    f"📅 <b>Ngày đến:</b> {ngay_den}\n"
-                    f"📝 <b>Trích yếu:</b> {trich_yeu[:400]}\n"
-                    f"⏳ <b>Hạn xử lý:</b> {han_xl}\n"
-                    f"⏰ <i>Cập nhật: {datetime.now().strftime('%H:%M')}</i>"
-                )
-                bot.send_message(CHAT_ID, msg, parse_mode="HTML")
-                du_lieu[so_hieu] = {"so_cv": so_hieu, "ngay_den": ngay_den, "trich_yeu": trich_yeu, "han_xu_ly": han_xl}
-                co_thay_doi = True
-
-        if co_thay_doi:
-            luu_ds(du_lieu)
-            os.system('git config user.email "bot@github.com"')
-            os.system('git config user.name "Robot Bot"')
-            os.system(f'git add {FILE_DA_GUI}')
-            os.system('git commit -m "Update da_gui.json [skip ci]"')
-            os.system('git push')
-
-    except Exception as e:
-        log.error(f"Lỗi: {e}")
-    finally:
-        if driver: driver.quit()
-
-if __name__ == "__main__":
-    chay_robot()
+    return "🤖 Em đang nghe đây anh Hoàn! Anh muốn lọc theo giờ, theo độ khẩn hay kiểm tra việc tồn đọng ạ?"
