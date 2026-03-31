@@ -1,7 +1,8 @@
+gspread
+oauth2client
 pyTelegramBotAPI
 requests
 beautifulsoup4
-gspread
-oauth2client
+urllib3
 flask
 gunicorn
