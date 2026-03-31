@@ -8,10 +8,9 @@ import time
 from bs4 import BeautifulSoup
 from oauth2client.service_account import ServiceAccountCredentials
 
-# Tắt cảnh báo bảo mật SSL cho hệ thống nội bộ
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- LẤY BIẾN TỪ GITHUB SECRETS ---
+# --- THÔNG TIN TỪ GITHUB ---
 USER_NAME = os.environ.get("SKHCN_USER")
 PASS_WORD = os.environ.get("SKHCN_PASS")
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -24,95 +23,77 @@ bot = telebot.TeleBot(TOKEN)
 def ket_noi_sheets():
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        # Phân tích cú pháp JSON từ biến môi trường
         creds_dict = json.loads(GOOGLE_JSON)
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
-        # Mở trang tính đầu tiên
         return client.open(SHEET_NAME).get_worksheet(0)
     except Exception as e:
-        print(f"❌ Lỗi kết nối Google Sheets: {e}")
+        print(f"❌ Lỗi Sheets: {e}")
         return None
 
-def quet_hscv_dang_nhap():
+def quet_hscv_lotus_notes():
+    # Đường dẫn đăng nhập và đường dẫn trực tiếp đến bảng "Văn bản chờ xử lý"
     url_login = "https://hscvkhcn.dienbien.gov.vn/login"
-    url_main = "https://hscvkhcn.dienbien.gov.vn"
+    # Link này em lấy từ ảnh image_1f3362.jpg của anh
+    url_target = "https://hscvkhcn.dienbien.gov.vn/qlvb/vbden.nsf/Default?OpenForm"
     
     session = requests.Session()
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
-    }
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     
     try:
-        # Kiểm tra nếu chưa lấy được tài khoản từ GitHub
-        if not USER_NAME or not PASS_WORD:
-            print("⚠️ LỖI: Chưa lấy được SKHCN_USER hoặc SKHCN_PASS từ GitHub Secrets!")
-            return []
-
-        print(f"🔑 Đang thử đăng nhập tài khoản: {USER_NAME}...")
-        
-        # Dữ liệu đóng gói để gửi lệnh Login
-        payload = {
-            'username': USER_NAME,
-            'password': PASS_WORD,
-            'submit': 'Đăng nhập'
-        }
-        
-        # Thực hiện đăng nhập
+        print(f"🔑 Đăng nhập hệ thống Lotus Notes cho anh Hoàn...")
+        payload = {'username': USER_NAME, 'password': PASS_WORD, 'submit': 'Đăng nhập'}
         session.post(url_login, data=payload, headers=headers, verify=False, timeout=30)
         
-        # Truy cập trang chủ sau khi login để lấy bảng văn bản
-        response = session.get(url_main, headers=headers, verify=False, timeout=30)
+        # Nhảy thẳng vào trang danh sách văn bản
+        response = session.get(url_target, headers=headers, verify=False, timeout=30)
         
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
             ds_van_ban = []
             
-            # Tìm tất cả các bảng trên trang
-            tables = soup.find_all('table')
-            for table in tables:
-                rows = table.find_all('tr')
-                for row in rows:
-                    cols = row.find_all('td')
-                    if len(cols) >= 3:
-                        txt = [c.get_text(strip=True) for c in cols]
-                        # Kiểm tra xem dòng này có chứa số hiệu văn bản (thường có dấu /)
-                        if len(txt) > 1 and "/" in txt[1]:
-                            ds_van_ban.append(txt[1:4]) # Lấy Số hiệu, Ngày, Trích yếu
+            # Lotus Notes thường để dữ liệu trong các thẻ <tr> có class hoặc cấu trúc lặp lại
+            rows = soup.find_all('tr')
+            for row in rows:
+                cols = row.find_all('td')
+                # Dựa vào ảnh image_1f3362.jpg, dữ liệu bắt đầu từ các cột có số hiệu
+                if len(cols) >= 5:
+                    txt = [c.get_text(strip=True) for c in cols]
+                    # Lọc lấy dòng có ngày tháng (vd: 30/03/2026) và số hiệu
+                    if "/" in txt[2] and len(txt[2]) == 10: 
+                        ngay = txt[2]
+                        so_hieu = txt[3]
+                        trich_yeu = txt[5] if len(txt) > 5 else "Không có trích yếu"
+                        ds_van_ban.append([so_hieu, ngay, trich_yeu])
+            
             return ds_van_ban
     except Exception as e:
-        print(f"❌ Lỗi khi quét hệ thống HSCV: {e}")
+        print(f"❌ Lỗi quét Lotus: {e}")
     return []
 
 if __name__ == "__main__":
-    print(f"🚀 Robot bắt đầu làm việc lúc: {time.strftime('%H:%M:%S')}")
+    print(f"🚀 Robot bắt đầu quét chuyên sâu: {time.strftime('%H:%M:%S')}")
     sheet = ket_noi_sheets()
     
     if sheet:
-        danh_sach_moi = quet_hscv_dang_nhap()
-        if not danh_sach_moi:
-            print("📭 Đăng nhập được nhưng không tìm thấy bảng văn bản. Anh Hoàn kiểm tra lại giao diện trang chủ nhé!")
+        danh_sach = quet_hscv_lotus_notes()
+        if not danh_sach:
+            print("📭 Không tìm thấy bảng. Có thể hệ thống dùng iFrame chặn Robot.")
         else:
-            # Lấy danh sách số hiệu cũ trong cột A để đối chiếu
             try:
                 da_co = sheet.col_values(1)
             except:
                 da_co = []
 
-            moi_them = 0
-            # Duyệt danh sách từ cũ đến mới
-            for vb in reversed(danh_sach_moi):
+            moi = 0
+            for vb in reversed(danh_sach):
                 if vb[0] not in da_co:
-                    # Chèn vào Excel
                     sheet.insert_row(vb, 2)
-                    # Gửi tin nhắn Telegram
-                    msg = f"🔔 **VĂN BẢN HSCV MỚI!**\n\n📌 **Số hiệu:** `{vb[0]}`\n📝 **Trích yếu:** {vb[2]}"
-                    bot.send_message(CHAT_ID, msg, parse_mode="Markdown")
-                    print(f"✅ Đã báo cáo văn bản: {vb[0]}")
-                    moi_them += 1
-                    time.sleep(1) # Tránh bị Telegram chặn
-
-            if moi_them == 0:
-                print("☕ Không có văn bản nào mới trên hệ thống.")
-    
-    print("🏁 Robot đã hoàn thành phiên làm việc.")
+                    msg = f"🔔 **VĂN BẢN MỚI (HSCV)!**\n📌 Số: `{vb[0]}`\n📅 Ngày: {vb[1]}\n📝 ND: {vb[2]}"
+                    bot.send_message(CHAT_ID, msg)
+                    print(f"✅ Đã báo cáo: {vb[0]}")
+                    moi += 1
+            
+            if moi == 0:
+                print("☕ Không có văn bản mới nào.")
+    print("🏁 Robot nghỉ ngơi.")
