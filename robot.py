@@ -51,45 +51,51 @@ def ket_noi_sheets():
 
 
 def quet_lotus_v18():
-    url_login = "https://hscvkhcn.dienbien.gov.vn/login"
-    url_target = "https://hscvkhcn.dienbien.gov.vn/qlvb/vbden.nsf/Private_ChoXL_KoHan?OpenForm"
+    base_url   = "https://hscvkhcn.dienbien.gov.vn"
+    url_login  = f"{base_url}/qlvb/index.nsf/default?openform"   # trang lay cookie
+    url_post   = f"{base_url}/names.nsf?Login"                    # action cua form
+    url_target = f"{base_url}/qlvb/vbden.nsf/Private_ChoXL_KoHan?OpenForm"
 
     session = requests.Session()
-    headers = {
+    headers_get = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    }
+    headers_post = {
+        **headers_get,
         'Content-Type': 'application/x-www-form-urlencoded',
-        'Origin': 'https://hscvkhcn.dienbien.gov.vn',
-        'Referer': url_login
+        'Origin': base_url,
+        'Referer': url_login,
     }
 
     try:
-        # Buoc 1: Lay cookie khoi tao
-        print("🌐 [B1] Dang ket noi toi trang login...")
-        r0 = session.get(url_login, verify=False, timeout=15)
+        # Buoc 1: Lay cookie tu trang login
+        print("🌐 [B1] Lay cookie tu trang login...")
+        r0 = session.get(url_login, headers=headers_get, verify=False, timeout=15)
         print(f"   Status: {r0.status_code} | URL: {r0.url}")
 
-        # Buoc 2: Dang nhap
-        print("🔑 [B2] Dang gui thong tin dang nhap...")
+        # Buoc 2: POST dang nhap theo chuan Domino
+        print("🔑 [B2] Dang nhap Domino...")
         login_data = {
             'Username': USER_NAME,
             'Password': PASS_WORD,
             'RedirectTo': '/qlvb/vbden.nsf/Private_ChoXL_KoHan?OpenForm',
-            '__Click': '0'
         }
-        res_login = session.post(url_login, data=login_data, headers=headers, verify=False, allow_redirects=True)
+        res_login = session.post(url_post, data=login_data, headers=headers_post, verify=False, allow_redirects=True)
         print(f"   Status: {res_login.status_code} | URL cuoi: {res_login.url}")
-        print("===== HTML SAU DANG NHAP (1000 ky tu) =====")
-        print(res_login.text[:1000])
-        print("===== HET =====")
 
-        # Buoc 3: Truy cap trang du lieu
-        print("📄 [B3] Dang truy cap trang van ban...")
-        response = session.get(url_target, headers=headers, verify=False, timeout=25)
+        # Kiem tra da dang nhap chua
+        if 'Username' in res_login.text or 'Password' in res_login.text or 'Dang nhap' in res_login.text:
+            print("❌ Van con o trang dang nhap — sai user/pass hoac bi chan!")
+            print("   HTML (500 ky tu):", res_login.text[:500])
+            return []
+        else:
+            print("✅ Dang nhap thanh cong!")
+
+        # Buoc 3: Truy cap trang van ban cho xu ly
+        print("📄 [B3] Truy cap trang van ban...")
+        response = session.get(url_target, headers=headers_get, verify=False, timeout=25)
         print(f"   Status: {response.status_code} | URL: {response.url}")
-        print("===== HTML TRANG DU LIEU (1000 ky tu) =====")
-        print(response.text[:1000])
-        print("===== HET =====")
 
         # Parse du lieu
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -118,20 +124,20 @@ def quet_lotus_v18():
                 if so_hieu:
                     ds_van_ban.append([so_hieu, found_date, noi_dung])
 
-        print(f"✅ Parse xong: {len(ds_van_ban)} van ban co ngay thang")
+        print(f"✅ Parse xong: {len(ds_van_ban)} van ban")
         return ds_van_ban
 
     except requests.exceptions.ConnectionError as e:
-        print(f"❌ Loi ket noi mang: {e}")
+        print(f"❌ Loi ket noi: {e}")
     except requests.exceptions.Timeout:
-        print("❌ Loi timeout: Server khong phan hoi sau 25 giay")
+        print("❌ Timeout: server khong phan hoi")
     except Exception as e:
         print(f"❌ Loi khac: {e}")
     return []
 
 
 if __name__ == "__main__":
-    print(f"\n🚀 Robot HSCV V18 bat dau: {time.strftime('%H:%M:%S')}")
+    print(f"\n🚀 Robot HSCV bat dau: {time.strftime('%H:%M:%S')}")
     print("=" * 50)
 
     sheet = ket_noi_sheets()
@@ -142,7 +148,7 @@ if __name__ == "__main__":
         if not danh_sach:
             print("📭 Khong lay duoc du lieu.")
         else:
-            print(f"🎉 Thanh cong! Tim thay {len(danh_sach)} van ban.")
+            print(f"🎉 Tim thay {len(danh_sach)} van ban!")
             try:
                 da_co = sheet.col_values(1)
             except Exception as e:
@@ -163,16 +169,16 @@ if __name__ == "__main__":
                         bot.send_message(CHAT_ID, msg, parse_mode='Markdown')
                         print(f"✅ Da bao: {vb[0]}")
                         moi += 1
-                        time.sleep(1)  # Tranh spam Telegram
+                        time.sleep(1)
                     except Exception as e:
-                        print(f"❌ Loi khi luu/gui: {e}")
+                        print(f"❌ Loi luu/gui: {e}")
 
             if moi == 0:
                 print("☕ Khong co van ban moi.")
             else:
-                print(f"📬 Da gui {moi} thong bao moi.")
+                print(f"📬 Da gui {moi} thong bao.")
     else:
-        print("❌ Khong ket noi duoc Google Sheets. Dung lai.")
+        print("❌ Khong ket noi duoc Sheets.")
 
     print("=" * 50)
     print(f"🏁 Ket thuc: {time.strftime('%H:%M:%S')}")
