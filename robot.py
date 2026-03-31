@@ -81,9 +81,11 @@ def quet_lotus_v18():
         return ket_qua
 
     try:
+        # Buoc 1: Lay cookie
         print("[B1] Lay cookie...")
         session.get(url_login, headers=headers_get, verify=False, timeout=15)
 
+        # Buoc 2: Dang nhap
         print("[B2] Dang nhap...")
         res_login = session.post(url_post, data={
             'Username': USER_NAME,
@@ -97,23 +99,33 @@ def quet_lotus_v18():
             return []
         print("Dang nhap OK!")
 
+        # Buoc 3: Lay tung trang
         ds_van_ban = []
         trang = 1
+
         while True:
-            url_trang = url_target if trang == 1 else f"{url_target}&Start={((trang-1)*20)+1}"
-            print(f"[B3] Lay trang {trang}: {url_trang}")
+            if trang == 1:
+                url_trang = url_target
+            else:
+                url_trang = f"{base_url}/qlvb/vbden.nsf/Private_ChoXL_KoHan?openForm&p={trang}"
+
+            print(f"[B3] Lay trang {trang}...")
             response = session.get(url_trang, headers=headers_get, verify=False, timeout=25)
             vb_trang = parse_trang(response.text)
             print(f"   Trang {trang}: {len(vb_trang)} van ban")
+
             if not vb_trang:
+                print(f"   Trang {trang} rong, dung lai.")
                 break
+
             ds_van_ban.extend(vb_trang)
-            if f'Start={((trang)*20)+1}' not in response.text and trang > 1:
-                break
+
             if trang >= 10:
                 break
+
             trang += 1
 
+        # Loai bo trung lap theo so hieu
         seen = set()
         ds_unique = []
         for vb in ds_van_ban:
@@ -121,9 +133,13 @@ def quet_lotus_v18():
                 seen.add(vb[0])
                 ds_unique.append(vb)
 
-        print(f"Tong: {len(ds_unique)} van ban")
+        print(f"Tong: {len(ds_unique)} van ban (da loai trung)")
         return ds_unique
 
+    except requests.exceptions.ConnectionError as e:
+        print(f"Loi ket noi: {e}")
+    except requests.exceptions.Timeout:
+        print("Timeout")
     except Exception as e:
         print(f"Loi: {e}")
     return []
@@ -131,6 +147,7 @@ def quet_lotus_v18():
 if __name__ == "__main__":
     print(f"=== Robot bat dau: {time.strftime('%H:%M:%S')} ===")
     sheet = ket_noi_sheets()
+
     if sheet:
         danh_sach = quet_lotus_v18()
         if not danh_sach:
@@ -139,8 +156,10 @@ if __name__ == "__main__":
             print(f"Tim thay {len(danh_sach)} van ban!")
             try:
                 da_co = sheet.col_values(1)
-            except:
+            except Exception as e:
+                print(f"Loi doc Sheets: {e}")
                 da_co = []
+
             moi = 0
             for vb in reversed(danh_sach):
                 if vb[0] not in da_co:
@@ -158,8 +177,13 @@ if __name__ == "__main__":
                         moi += 1
                         time.sleep(1)
                     except Exception as e:
-                        print(f"Loi: {e}")
-            print(f"Moi: {moi} van ban.")
+                        print(f"Loi luu/gui: {e}")
+
+            if moi == 0:
+                print("Khong co van ban moi.")
+            else:
+                print(f"Da gui {moi} thong bao.")
     else:
         print("Khong ket noi Sheets.")
+
     print(f"=== Ket thuc: {time.strftime('%H:%M:%S')} ===")
