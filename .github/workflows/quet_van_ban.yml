@@ -24,3 +24,7 @@ jobs:
           SKHCN_USER: ${{ secrets.SKHCN_USER }}
           SKHCN_PASS: ${{ secrets.SKHCN_PASS }}
         run: python robot.py
+        - name: Chay Robot
+  run: python robot.py 2>&1
+  env:
+    ...
