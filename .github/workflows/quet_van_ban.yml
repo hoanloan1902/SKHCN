@@ -2,8 +2,8 @@ name: Robot Quet Van Ban HSCV
 
 on:
   schedule:
-    - cron: '0 * * * *' # Chạy mỗi tiếng
-  workflow_dispatch: # Nút bấm chạy tay
+    - cron: '0 * * * *'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -16,15 +16,10 @@ jobs:
       - name: Cai dat thu vien
         run: pip install -r requirements.txt
       - name: Chay Robot
+        run: python robot.py 2>&1
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           GSPREAD_SERVICE_ACCOUNT: ${{ secrets.GSPREAD_SERVICE_ACCOUNT }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          # THÊM 2 DÒNG NÀY ĐỂ ROBOT THẤY TÀI KHOẢN:
           SKHCN_USER: ${{ secrets.SKHCN_USER }}
           SKHCN_PASS: ${{ secrets.SKHCN_PASS }}
-        run: python robot.py
-        - name: Chay Robot
-  run: python robot.py 2>&1
-  env:
-    ...
