@@ -1,5 +1,5 @@
 gspread
 oauth2client
-python-telegram-bot
+pyTelegramBotAPI
 selenium
 webdriver-manager
