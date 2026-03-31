@@ -1,19 +1,18 @@
-name: Robot Kiem Tra Van Ban
+name: Robot Quet Van Ban Tu Dong
 
 on:
   schedule:
-    - cron: '*/30 * * * *' 
-  workflow_dispatch: 
+    - cron: '0 * * * *' # Tu dong chay moi 1 tieng
+  workflow_dispatch: # Cho phep anh bam nut chay thu cong
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: 1. Lay code tu Github
+      - name: 1. Lay code ve
         uses: actions/checkout@v3
 
-      - name: 2. Cai dat Python 3.9
+      - name: 2. Cai dat Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
@@ -23,15 +22,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 4. Cai dat Chrome
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
-
-      - name: 5. Chay Robot
+      - name: 4. Chay Robot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           GSPREAD_SERVICE_ACCOUNT: ${{ secrets.GSPREAD_SERVICE_ACCOUNT }}
-          SKHCN_USER: ${{ secrets.SKHCN_USER }}
-          SKHCN_PASS: ${{ secrets.SKHCN_PASS }}
+          CHAT_ID: ${{ secrets.CHAT_ID }} # ID Telegram cua anh de nhan tin nhan
         run: python robot.py
