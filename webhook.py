@@ -12,6 +12,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# --- LAY BIEN MOI TRUONG ---
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GOOGLE_JSON = os.environ.get("GSPREAD_SERVICE_ACCOUNT")
 CHAT_ID = os.environ.get("CHAT_ID")
@@ -33,9 +34,9 @@ def ket_noi_sheets():
         return None
 
 def lay_van_ban():
-    base_url   = "https://hscvkhcn.dienbien.gov.vn"
-    url_login  = f"{base_url}/qlvb/index.nsf/default?openform"
-    url_post   = f"{base_url}/names.nsf?Login"
+    base_url = "https://hscvkhcn.dienbien.gov.vn"
+    url_login = f"{base_url}/qlvb/index.nsf/default?openform"
+    url_post = f"{base_url}/names.nsf?Login"
     url_target = f"{base_url}/qlvb/vbden.nsf/Private_ChoXL_KoHan?OpenForm"
     session = requests.Session()
     headers_get = {
@@ -50,16 +51,15 @@ def lay_van_ban():
         ket_qua = []
         for row in soup.find_all('tr'):
             tds = row.find_all('td')
-            if len(tds) < 5:
-                continue
+            if len(tds) < 5: continue
             cols = [re.sub(r'\s+', ' ', td.get_text()).strip() for td in tds]
             so_den = ngay_den = so_hieu = co_quan = trich_yeu = ""
             for i, c in enumerate(cols):
                 if re.match(r'^\d{2}/\d{2}/\d{4}$', c):
-                    ngay_den  = c
-                    so_den    = cols[i-1] if i >= 1 else ""
-                    so_hieu   = cols[i+1] if i+1 < len(cols) else ""
-                    co_quan   = cols[i+2] if i+2 < len(cols) else ""
+                    ngay_den = c
+                    so_den = cols[i-1] if i >= 1 else ""
+                    so_hieu = cols[i+1] if i+1 < len(cols) else ""
+                    co_quan = cols[i+2] if i+2 < len(cols) else ""
                     trich_yeu = cols[i+3] if i+3 < len(cols) else ""
                     break
             if ngay_den and so_hieu and re.search(r'\d+', so_den):
@@ -82,8 +82,7 @@ def lay_van_ban():
             url_trang = url_target if trang == 1 else f"{base_url}/qlvb/vbden.nsf/Private_ChoXL_KoHan?openForm&p={trang}"
             response = session.get(url_trang, headers=headers_get, verify=False, timeout=25)
             vb_trang = parse_trang(response.text)
-            if not vb_trang:
-                break
+            if not vb_trang: break
             ds_van_ban.extend(vb_trang)
 
         seen = set()
@@ -99,7 +98,8 @@ def lay_van_ban():
 
 @app.route(f"/{TOKEN}", methods=['POST'])
 def webhook():
-    update = telebot.types.Update.de_json(request.get_json())
+    json_string = request.get_data().decode('utf-8')
+    update = telebot.types.Update.de_json(json_string)
     bot.process_new_updates([update])
     return 'ok', 200
 
@@ -110,61 +110,32 @@ def index():
 @bot.message_handler(func=lambda m: True)
 def xu_ly_tin_nhan(message):
     text = message.text.lower().strip()
-
-    if any(x in text for x in ['bao nhieu', 'bao nhiêu', 'tong so', 'tổng số', 'thong ke', 'thống kê']):
-        bot.reply_to(message, "⏳ Đang kiểm tra, chờ mình chút...")
+    # Thong ke
+    if any(x in text for x in ['bao nhieu', 'bao nhiêu', 'tong so', 'tổng số']):
+        bot.send_message(message.chat.id, "⏳ Đang đếm văn bản trong Sheets, đợi xíu nhé...")
         sheet = ket_noi_sheets()
         if sheet:
             try:
                 da_co = sheet.col_values(1)
-                tong = len([x for x in da_co if x])
-                bot.reply_to(message, f"📊 *THỐNG KÊ VĂN BẢN*\n✅ Tổng văn bản đã nhận: *{tong}*\n🕐 Cập nhật: {time.strftime('%d/%m/%Y %H:%M')}", parse_mode='Markdown')
+                tong = len([x for x in da_co if x]) - 1 # Tru dong tieu de
+                bot.reply_to(message, f"📊 *THỐNG KÊ*\n✅ Tổng văn bản: *{tong}*\n🕐 Lúc: {time.strftime('%H:%M')}", parse_mode='Markdown')
             except Exception as e:
-                bot.reply_to(message, f"❌ Lỗi: {e}")
+                bot.reply_to(message, f"❌ Lỗi Sheets: {e}")
         else:
             bot.reply_to(message, "❌ Không kết nối được Sheets!")
-
-    elif any(x in text for x in ['/vanban', 'danh sach', 'danh sách', 'van ban moi', 'văn bản mới']):
-        # Lay so luong can hien
-        so_luong = 10
-        for word in text.split():
-            if word.isdigit():
-                so_luong = min(int(word), 30)
-                break
-
-        bot.reply_to(message, f"⏳ Đang lấy {so_luong} văn bản mới nhất...")
+    # Danh sach van ban moi
+    elif any(x in text for x in ['danh sach', 'danh sách', 'mới nhất']):
+        bot.send_message(message.chat.id, "⏳ Đang quét hệ thống Sở, đợi anh Hoàn xíu nhé...")
         danh_sach = lay_van_ban()
-
         if not danh_sach:
-            bot.reply_to(message, "❌ Không lấy được dữ liệu!")
+            bot.reply_to(message, "❌ Không lấy được dữ liệu mới!")
             return
-
-        danh_sach = danh_sach[:so_luong]
-        msg = f"📋 *{so_luong} VĂN BẢN MỚI NHẤT:*\n\n"
-        for i, vb in enumerate(danh_sach, 1):
-            msg += f"{i}. `{vb[0]}` | {vb[1]}\n📝 {vb[2][:80]}...\n\n"
-
+        msg = "📋 *VĂN BẢN MỚI NHẤT:*\n\n"
+        for i, vb in enumerate(danh_sach[:5], 1): # Hien 5 cai thoi cho do dai
+            msg += f"{i}. `{vb[0]}`\n📝 {vb[2][:100]}...\n\n"
         bot.reply_to(message, msg, parse_mode='Markdown')
-
     else:
-        bot.reply_to(message, 
-            "👋 Xin chào! Tôi có thể giúp:\n"
-            "• Hỏi *bao nhiêu văn bản* → thống kê\n"
-            "• Gõ */vanban* hoặc */vanban 10* → xem danh sách",
-            parse_mode='Markdown')
+        bot.reply_to(message, "👋 Chào anh Hoàn! Anh có thể hỏi 'tổng số' hoặc 'danh sách' để em báo cáo nhé.")
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
-```
-
----
-
-**File 2: `requirements.txt`** (cập nhật thêm flask)
-```
-gspread
-oauth2client
-pyTelegramBotAPI
-requests
-beautifulsoup4
-urllib3
-flask
