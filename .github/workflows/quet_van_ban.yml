@@ -1,30 +1,26 @@
-name: Robot Quet Van Ban So KHCN Dien Bien
+name: Robot Quet Van Ban HSCV
 
 on:
   schedule:
-    - cron: '0 * * * *' # Chạy tự động mỗi giờ một lần
-  workflow_dispatch: # Nút bấm chạy thủ công
+    - cron: '0 * * * *' # Chạy mỗi tiếng
+  workflow_dispatch: # Nút bấm chạy tay
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: 1. Lay code ve
-        uses: actions/checkout@v3
-
-      - name: 2. Cai dat Python
-        uses: actions/setup-python@v4
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-
-      - name: 3. Cai dat thu vien
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: 4. Chay Robot
+      - name: Cai dat thu vien
+        run: pip install -r requirements.txt
+      - name: Chay Robot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           GSPREAD_SERVICE_ACCOUNT: ${{ secrets.GSPREAD_SERVICE_ACCOUNT }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
+          # THÊM 2 DÒNG NÀY ĐỂ ROBOT THẤY TÀI KHOẢN:
+          SKHCN_USER: ${{ secrets.SKHCN_USER }}
+          SKHCN_PASS: ${{ secrets.SKHCN_PASS }}
         run: python robot.py
