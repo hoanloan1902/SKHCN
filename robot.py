@@ -1,3 +1,52 @@
+import os
+import json
+import gspread
+import telebot
+import requests
+import urllib3
+import time
+import re
+from bs4 import BeautifulSoup
+from oauth2client.service_account import ServiceAccountCredentials
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# --- CAU HINH ---
+USER_NAME = os.environ.get("SKHCN_USER")
+PASS_WORD = os.environ.get("SKHCN_PASS")
+TOKEN = os.environ.get("TELEGRAM_TOKEN")
+GOOGLE_JSON = os.environ.get("GSPREAD_SERVICE_ACCOUNT")
+CHAT_ID = os.environ.get("CHAT_ID")
+SHEET_NAME = "DANH_SACH_VAN_BAN"
+
+print(f"🔍 Kiem tra bien:")
+print(f"   USER    = {'OK' if USER_NAME else 'MISSING'}")
+print(f"   PASS    = {'OK' if PASS_WORD else 'MISSING'}")
+print(f"   TOKEN   = {'OK' if TOKEN else 'MISSING'}")
+print(f"   CHAT_ID = {'OK' if CHAT_ID else 'MISSING'}")
+print(f"   GOOGLE  = {'OK' if GOOGLE_JSON else 'MISSING'}")
+
+if not TOKEN:
+    print("TELEGRAM_TOKEN chua duoc set!")
+    exit(1)
+
+bot = telebot.TeleBot(TOKEN)
+
+def ket_noi_sheets():
+    if not GOOGLE_JSON:
+        print("GSPREAD chua set!")
+        return None
+    try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+        creds_dict = json.loads(GOOGLE_JSON)
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        print("Ket noi Sheets OK!")
+        return client.open(SHEET_NAME).sheet1
+    except Exception as e:
+        print(f"Loi Sheets: {e}")
+        return None
+
 def quet_lotus_v18():
     base_url   = "https://hscvkhcn.dienbien.gov.vn"
     url_login  = f"{base_url}/qlvb/index.nsf/default?openform"
@@ -17,13 +66,11 @@ def quet_lotus_v18():
     }
 
     try:
-        # Buoc 1: Lay cookie
-        print("🌐 [B1] Lay cookie...")
+        print("[B1] Lay cookie...")
         r0 = session.get(url_login, headers=headers_get, verify=False, timeout=15)
         print(f"   Status: {r0.status_code}")
 
-        # Buoc 2: Dang nhap
-        print("🔑 [B2] Dang nhap...")
+        print("[B2] Dang nhap...")
         login_data = {
             'Username': USER_NAME,
             'Password': PASS_WORD,
@@ -33,36 +80,24 @@ def quet_lotus_v18():
         print(f"   Status: {res_login.status_code} | URL: {res_login.url}")
 
         if 'Username' in res_login.text and 'Password' in res_login.text:
-            print("❌ Dang nhap that bai!")
+            print("Dang nhap that bai!")
             return []
-        print("✅ Dang nhap thanh cong!")
+        print("Dang nhap thanh cong!")
 
-        # Buoc 3: Truy cap trang danh sach
-        print("📄 [B3] Lay danh sach van ban...")
+        print("[B3] Lay danh sach van ban...")
         response = session.get(url_target, headers=headers_get, verify=False, timeout=25)
         print(f"   Status: {response.status_code}")
 
-        # Parse dung theo cau truc that: tab-separated
         soup = BeautifulSoup(response.text, 'html.parser')
         ds_van_ban = []
-
         rows = soup.find_all('tr')
+
         for row in rows:
             tds = row.find_all('td')
             if len(tds) < 5:
                 continue
-
-            # Lay text tung cot
             cols = [re.sub(r'\s+', ' ', td.get_text()).strip() for td in tds]
-
-            # Tim cot co ngay dd/mm/yyyy
-            so_den   = ""
-            ngay_den = ""
-            so_hieu  = ""
-            co_quan  = ""
-            trich_yeu = ""
-
-            # Duyet cac cot tim ngay
+            so_den = ngay_den = so_hieu = co_quan = trich_yeu = ""
             for i, c in enumerate(cols):
                 if re.match(r'^\d{2}/\d{2}/\d{4}$', c):
                     ngay_den  = c
@@ -71,27 +106,62 @@ def quet_lotus_v18():
                     co_quan   = cols[i+2] if i+2 < len(cols) else ""
                     trich_yeu = cols[i+3] if i+3 < len(cols) else ""
                     break
-
-            # Chi lay hang co du thong tin
             if ngay_den and so_hieu and re.search(r'\d+', so_den):
-                # Loai bo hang chi co so thu tu hoac rong
                 so_hieu_clean = so_hieu.strip()
                 if so_hieu_clean and '/' in so_hieu_clean:
-                    ds_van_ban.append([
-                        so_hieu_clean,
-                        ngay_den,
-                        trich_yeu[:200],
-                        co_quan,
-                        so_den
-                    ])
+                    ds_van_ban.append([so_hieu_clean, ngay_den, trich_yeu[:200], co_quan, so_den])
 
-        print(f"✅ Parse xong: {len(ds_van_ban)} van ban")
+        print(f"Parse xong: {len(ds_van_ban)} van ban")
         return ds_van_ban
 
     except requests.exceptions.ConnectionError as e:
-        print(f"❌ Loi ket noi: {e}")
+        print(f"Loi ket noi: {e}")
     except requests.exceptions.Timeout:
-        print("❌ Timeout")
+        print("Timeout")
     except Exception as e:
-        print(f"❌ Loi: {e}")
+        print(f"Loi: {e}")
     return []
+
+if __name__ == "__main__":
+    print(f"Robot bat dau: {time.strftime('%H:%M:%S')}")
+    sheet = ket_noi_sheets()
+
+    if sheet:
+        danh_sach = quet_lotus_v18()
+        if not danh_sach:
+            print("Khong lay duoc du lieu.")
+        else:
+            print(f"Tim thay {len(danh_sach)} van ban!")
+            try:
+                da_co = sheet.col_values(1)
+            except Exception as e:
+                print(f"Loi doc Sheets: {e}")
+                da_co = []
+
+            moi = 0
+            for vb in reversed(danh_sach):
+                if vb[0] not in da_co:
+                    try:
+                        sheet.insert_row(vb, 2)
+                        msg = (
+                            f"*VAN BAN MOI!*\n"
+                            f"So hieu: `{vb[0]}`\n"
+                            f"Ngay: {vb[1]}\n"
+                            f"Co quan: {vb[3]}\n"
+                            f"Trich yeu: {vb[2]}"
+                        )
+                        bot.send_message(CHAT_ID, msg, parse_mode='Markdown')
+                        print(f"Da bao: {vb[0]}")
+                        moi += 1
+                        time.sleep(1)
+                    except Exception as e:
+                        print(f"Loi luu/gui: {e}")
+
+            if moi == 0:
+                print("Khong co van ban moi.")
+            else:
+                print(f"Da gui {moi} thong bao.")
+    else:
+        print("Khong ket noi duoc Sheets.")
+
+    print(f"Ket thuc: {time.strftime('%H:%M:%S')}")
