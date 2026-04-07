@@ -12,13 +12,15 @@ from oauth2client.service_account import ServiceAccountCredentials
 # Tắt cảnh báo bảo mật cho trang .gov.vn
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- BIẾN MÔI TRƯỜNG (Cấu hình trên GitHub Secrets) ---
+# --- BIẾN MÔI TRƯỜNG (Cấu hình trên GitHub/Render Secrets) ---
 USER_NAME = os.environ.get("SKHCN_USER")
 PASS_WORD = os.environ.get("SKHCN_PASS")
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GOOGLE_JSON = os.environ.get("GSPREAD_SERVICE_ACCOUNT")
 CHAT_ID = os.environ.get("CHAT_ID")
 SHEET_NAME = "DANH_SACH_VAN_BAN"
+
+bot = telebot.TeleBot(TOKEN)
 
 def ket_noi_sheets():
     try:
@@ -30,96 +32,51 @@ def ket_noi_sheets():
         print(f"❌ Lỗi kết nối Google Sheets: {e}")
         return None
 
-def quet_he_thong_hscv():
-    base_url = "https://hscvkhcn.dienbien.gov.vn"
-    url_post = f"{base_url}/names.nsf?Login"
-    url_target = f"{base_url}/qlvb/vbden.nsf/Private_ChoXL_KoHan?OpenForm"
-    
-    session = requests.Session()
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    
+def lay_thong_ke_tu_sheet():
     try:
-        # 1. Đăng nhập hệ thống
-        session.post(url_post, data={
-            'Username': USER_NAME,
-            'Password': PASS_WORD,
-            'RedirectTo': '/qlvb/vbden.nsf/Private_ChoXL_KoHan?OpenForm',
-        }, headers=headers, verify=False)
-        
-        # 2. Lấy dữ liệu trang mục tiêu
-        response = session.get(url_target, headers=headers, verify=False, timeout=30)
-        response.encoding = response.apparent_encoding
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        ket_qua = []
-        for row in soup.find_all('tr'):
-            tds = row.find_all('td')
-            if len(tds) < 5: continue
-            cols = [re.sub(r'\s+', ' ', td.get_text()).strip() for td in tds]
-            
-            # Khớp định dạng ngày dd/mm/yyyy như trong ảnh của anh
-            for i, c in enumerate(cols):
-                if re.match(r'^\d{2}/\d{2}/\d{4}$', c):
-                    ngay = c
-                    so_hieu = cols[i+1] if i+1 < len(cols) else ""
-                    co_quan = cols[i+2] if i+2 < len(cols) else ""
-                    trich_yeu = cols[i+3] if i+3 < len(cols) else ""                                        if "/" in so_hieu or "-" in so_hieu:
-                        # Thứ tự: Số hiệu, Ngày, Trích yếu, Nơi gửi (Khớp cột A, B, C, D)
-                        ket_qua.append([so_hieu, ngay, trich_yeu, co_quan])
-                    break
-        return ket_qua
+        workbook = ket_noi_sheets()
+        ws = workbook.worksheet("STATUS")
+        records = ws.get_all_records()
+        # Chuyển dữ liệu sheet thành dictionary để dễ lấy
+        return {row['THÔNG SỐ']: row['GIÁ TRỊ'] for row in records}
     except Exception as e:
-        print(f"❌ Lỗi khi quét web: {e}")
-        return []
+        print(f"❌ Lỗi đọc tab STATUS: {e}")
+        return None
 
-def cap_nhat_he_thong():
-    print(f"🚀 Bắt đầu phiên quét: {time.strftime('%d/%m/%Y %H:%M:%S')}")
-    workbook = ket_noi_sheets()
-    if not workbook: return
+def soan_tin_nhan():
+    data = lay_thong_ke_tu_sheet()
+    if not data:
+        return "❌ Em không đọc được dữ liệu từ tab 'STATUS' trong Google Sheets của anh."
     
-    sheet_main = workbook.sheet1
-    try:
-        sheet_status = workbook.worksheet("STATUS")
-    except:
-        print("⚠️ CẢNH BÁO: Anh chưa tạo tab 'STATUS'. Vui lòng tạo để Bot 24/7 hoạt động.")
-        return
+    return (
+        f"📊 *THỐNG KÊ HỆ THỐNG*\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📩 Đang chờ xử lý: `{data.get('tong_so', 0)}`\n"
+        f"🆕 Lần quét cuối thêm: `{data.get('moi_phien_nay', 0)}` văn bản\n"
+        f"⏰ Cập nhật lúc: {data.get('cap_nhat_cuoi', 'Chưa rõ')}\n\n"
+        f"📂 [Nhấn để xem bảng chi tiết](https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID_HERE)"
+    )
+
+# --- XỬ LÝ TIN NHẮN TELEGRAM ---
+
+# 1. Lệnh /thongke hoặc /start
+@bot.message_handler(commands=['thongke', 'start'])
+def command_thongke(message):
+    bot.reply_to(message, soan_tin_nhan(), parse_mode='Markdown')
+
+# 2. Đọc tin nhắn thường (Khi anh gõ chữ 'thống kê', 'bao nhiêu'...)
+@bot.message_handler(func=lambda msg: True)
+def chat_tu_dong(message):
+    noi_dung = message.text.lower()
+    keywords = ['thống kê', 'thong ke', 'bao nhiêu', 'bao nhieu', 'tình hình', 'công văn']
     
-    danh_sach = quet_he_thong_hscv()
-    if not danh_sach:
-        print("📭 Không tìm thấy dữ liệu mới hoặc lỗi login.")
-        return
+    if any(word in noi_dung for word in keywords):
+        bot.reply_to(message, soan_tin_nhan(), parse_mode='Markdown')
+    else:
+        bot.reply_to(message, "Chào anh Hoàn! Anh muốn xem 'thống kê' công văn hay cần em giúp gì không?")
 
-    # Lấy danh sách số hiệu cũ để tránh ghi trùng
-    try:
-        da_co = sheet_main.col_values(1)
-    except:
-        da_co = []
-
-    moi_count = 0
-    bot = telebot.TeleBot(TOKEN)
-
-    # Ghi văn bản mới lên đầu (Dưới dòng tiêu đề)
-    for vb in reversed(danh_sach):
-        if vb[0] not in da_co:
-            sheet_main.insert_row(vb, 2)
-            # Bắn thông báo Telegram cho anh Hoàn
-            msg = (f"🔔 *CÓ VĂN BẢN MỚI*\n"
-                   f"📌 *Số:* `{vb[0]}`\n"
-                   f"🏢 *Gửi từ:* {vb[3]}\n"
-                   f"📝 *Nội dung:* {vb[2][:150]}...")
-            bot.send_message(CHAT_ID, msg, parse_mode='Markdown')
-            moi_count += 1
-            time.sleep(1) # Tránh bị Telegram chặn do gửi nhanh
-
-    # Cập nhật bảng STATUS để Bot phản hồi 24/7 lấy dữ liệu trả lời anh
-    status_update = [
-        ["THÔNG SỐ", "GIÁ TRỊ"],
-        ["tong_so", len(danh_sach)],
-        ["moi_phien_nay", moi_count],
-        ["cap_nhat_cuoi", time.strftime('%H:%M:%S %d/%m/%Y')]
-    ]
-    sheet_status.update("A1:B4", status_update)
-    print(f"✅ Xong! Thêm mới {moi_count} văn bản. Tổng chờ xử lý: {len(danh_sach)}")
-
+# --- CHẠY BOT ---
 if __name__ == "__main__":
-    cap_nhat_he_thong()
+    print("🤖 Bot của anh Hoàn đang trực 24/7...")
+    # Thêm dòng này để Render không báo lỗi Port
+    bot.infinity_polling()
