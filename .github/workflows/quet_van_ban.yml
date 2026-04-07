@@ -41,4 +41,4 @@ jobs:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           GSPREAD_SERVICE_ACCOUNT: ${{ secrets.GSPREAD_SERVICE_ACCOUNT }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-        run: python main_scan.py
+        run: python robot.py
