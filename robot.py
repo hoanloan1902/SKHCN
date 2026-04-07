@@ -9,74 +9,108 @@ import re
 from bs4 import BeautifulSoup
 from oauth2client.service_account import ServiceAccountCredentials
 
-# Tắt cảnh báo bảo mật cho trang .gov.vn
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# --- BIẾN MÔI TRƯỜNG (Cấu hình trên GitHub/Render Secrets) ---
 USER_NAME = os.environ.get("SKHCN_USER")
 PASS_WORD = os.environ.get("SKHCN_PASS")
-TOKEN = os.environ.get("TELEGRAM_TOKEN")
+TOKEN     = os.environ.get("TELEGRAM_TOKEN")
 GOOGLE_JSON = os.environ.get("GSPREAD_SERVICE_ACCOUNT")
-CHAT_ID = os.environ.get("CHAT_ID")
+CHAT_ID   = os.environ.get("CHAT_ID")
 SHEET_NAME = "DANH_SACH_VAN_BAN"
-
-bot = telebot.TeleBot(TOKEN)
 
 def ket_noi_sheets():
     try:
-        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(json.loads(GOOGLE_JSON), scope)
+        scope = ["https://spreadsheets.google.com/feeds",
+                 "https://www.googleapis.com/auth/drive"]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(
+            json.loads(GOOGLE_JSON), scope)
         client = gspread.authorize(creds)
         return client.open(SHEET_NAME)
     except Exception as e:
-        print(f"❌ Lỗi kết nối Google Sheets: {e}")
+        print(f"❌ Lỗi kết nối Sheets: {e}")
         return None
 
-def lay_thong_ke_tu_sheet():
+def quet_he_thong_hscv():
+    base_url   = "https://hscvkhcn.dienbien.gov.vn"
+    url_post   = f"{base_url}/names.nsf?Login"
+    url_target = f"{base_url}/qlvb/vbden.nsf/Private_ChoXL_KoHan?OpenForm"
+    session = requests.Session()
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
     try:
-        workbook = ket_noi_sheets()
-        ws = workbook.worksheet("STATUS")
-        records = ws.get_all_records()
-        # Chuyển dữ liệu sheet thành dictionary để dễ lấy
-        return {row['THÔNG SỐ']: row['GIÁ TRỊ'] for row in records}
+        session.post(url_post, data={
+            'Username': USER_NAME,
+            'Password': PASS_WORD,
+            'RedirectTo': '/qlvb/vbden.nsf/Private_ChoXL_KoHan?OpenForm',
+        }, headers=headers, verify=False)
+
+        response = session.get(url_target, headers=headers,
+                               verify=False, timeout=30)
+        response.encoding = response.apparent_encoding
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        ket_qua = []
+        for row in soup.find_all('tr'):
+            tds = row.find_all('td')
+            if len(tds) < 5:
+                continue
+            cols = [re.sub(r'\s+', ' ', td.get_text()).strip() for td in tds]
+            for i, c in enumerate(cols):
+                if re.match(r'^\d{2}/\d{2}/\d{4}$', c):
+                    ngay     = c
+                    so_hieu  = cols[i+1] if i+1 < len(cols) else ""
+                    co_quan  = cols[i+2] if i+2 < len(cols) else ""
+                    trich_yeu = cols[i+3] if i+3 < len(cols) else ""
+                    if "/" in so_hieu or "-" in so_hieu:
+                        ket_qua.append([so_hieu, ngay, trich_yeu, co_quan])
+                    break
+        return ket_qua
     except Exception as e:
-        print(f"❌ Lỗi đọc tab STATUS: {e}")
-        return None
+        print(f"❌ Lỗi quét web: {e}")
+        return []
 
-def soan_tin_nhan():
-    data = lay_thong_ke_tu_sheet()
-    if not data:
-        return "❌ Em không đọc được dữ liệu từ tab 'STATUS' trong Google Sheets của anh."
-    
-    return (
-        f"📊 *THỐNG KÊ HỆ THỐNG*\n"
-        f"━━━━━━━━━━━━━━━\n"
-        f"📩 Đang chờ xử lý: `{data.get('tong_so', 0)}`\n"
-        f"🆕 Lần quét cuối thêm: `{data.get('moi_phien_nay', 0)}` văn bản\n"
-        f"⏰ Cập nhật lúc: {data.get('cap_nhat_cuoi', 'Chưa rõ')}\n\n"
-        f"📂 [Nhấn để xem bảng chi tiết](https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID_HERE)"
-    )
+def cap_nhat_he_thong():
+    print(f"🚀 Bắt đầu quét: {time.strftime('%d/%m/%Y %H:%M:%S')}")
+    workbook = ket_noi_sheets()
+    if not workbook:
+        return
 
-# --- XỬ LÝ TIN NHẮN TELEGRAM ---
+    sheet_main   = workbook.sheet1
+    sheet_status = workbook.worksheet("STATUS")
 
-# 1. Lệnh /thongke hoặc /start
-@bot.message_handler(commands=['thongke', 'start'])
-def command_thongke(message):
-    bot.reply_to(message, soan_tin_nhan(), parse_mode='Markdown')
+    danh_sach = quet_he_thong_hscv()
+    if not danh_sach:
+        print("📭 Không có dữ liệu hoặc lỗi đăng nhập.")
+        return
 
-# 2. Đọc tin nhắn thường (Khi anh gõ chữ 'thống kê', 'bao nhiêu'...)
-@bot.message_handler(func=lambda msg: True)
-def chat_tu_dong(message):
-    noi_dung = message.text.lower()
-    keywords = ['thống kê', 'thong ke', 'bao nhiêu', 'bao nhieu', 'tình hình', 'công văn']
-    
-    if any(word in noi_dung for word in keywords):
-        bot.reply_to(message, soan_tin_nhan(), parse_mode='Markdown')
-    else:
-        bot.reply_to(message, "Chào anh Hoàn! Anh muốn xem 'thống kê' công văn hay cần em giúp gì không?")
+    try:
+        da_co = sheet_main.col_values(1)
+    except Exception:
+        da_co = []
 
-# --- CHẠY BOT ---
+    moi_count = 0
+    bot = telebot.TeleBot(TOKEN)
+
+    for vb in reversed(danh_sach):
+        if vb[0] not in da_co:
+            sheet_main.insert_row(vb, 2)
+            msg = (
+                f"🔔 *CÓ VĂN BẢN MỚI*\n"
+                f"📌 *Số:* `{vb[0]}`\n"
+                f"🏢 *Gửi từ:* {vb[3]}\n"
+                f"📝 *Nội dung:* {vb[2][:150]}..."
+            )
+            bot.send_message(CHAT_ID, msg, parse_mode='Markdown')
+            moi_count += 1
+            time.sleep(1)
+
+    # Ghi thống kê vào tab STATUS
+    sheet_status.update("A1:B4", [
+        ["THÔNG SỐ",    "GIÁ TRỊ"],
+        ["tong_so",     len(danh_sach)],
+        ["moi_phien_nay", moi_count],
+        ["cap_nhat_cuoi", time.strftime('%H:%M %d/%m/%Y')]
+    ])
+    print(f"✅ Xong! Thêm {moi_count} văn bản mới. Tổng: {len(danh_sach)}")
+
 if __name__ == "__main__":
-    print("🤖 Bot của anh Hoàn đang trực 24/7...")
-    # Thêm dòng này để Render không báo lỗi Port
-    bot.infinity_polling()
+    cap_nhat_he_thong()
