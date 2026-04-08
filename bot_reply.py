@@ -1,11 +1,15 @@
-import re
 import json
+import re
 from datetime import datetime, timedelta
+from flask import Flask, request
+import requests
 
-# File dữ liệu
+app = Flask(__name__)
+
 DATA_FILE = "da_guijson"
+TOKEN = "YOUR_BOT_TOKEN"  # Sẽ được thay thế bằng biến môi trường
+CHAT_ID = "YOUR_CHAT_ID"
 
-# Khung giờ
 KHUNG_GIO = {
     "sáng": (0, 11),
     "trưa": (11, 13),
@@ -39,98 +43,39 @@ def loc_theo_khung_gio(danh_sach, khung):
                 pass
     return ket_qua
 
-def loc_theo_tuan(danh_sach):
-    hom_nay = datetime.now()
-    tuan_truoc = hom_nay - timedelta(days=7)
-    ket_qua = []
-    for vb in danh_sach:
-        try:
-            ngay_vb = datetime.strptime(vb.get("ngay_den", ""), "%d/%m/%Y")
-            if tuan_truoc <= ngay_vb <= hom_nay:
-                ket_qua.append(vb)
-        except:
-            pass
-    return ket_qua
-
-def loc_theo_thang(danh_sach):
-    thang_hien_tai = datetime.now().month
-    nam_hien_tai = datetime.now().year
-    ket_qua = []
-    for vb in danh_sach:
-        try:
-            ngay_vb = datetime.strptime(vb.get("ngay_den", ""), "%d/%m/%Y")
-            if ngay_vb.month == thang_hien_tai and ngay_vb.year == nam_hien_tai:
-                ket_qua.append(vb)
-        except:
-            pass
-    return ket_qua
-
 def xu_ly_cau_hoi(cau_hoi):
     du_lieu = doc_du_lieu()
     danh_sach_vb = du_lieu.get("danh_sach_vb", [])
     cau_hoi = cau_hoi.lower().strip()
     
-    # Thống kê
-    if cau_hoi == "thống kê" or cau_hoi == "/thongke":
+    if cau_hoi in ["thống kê", "/thongke"]:
         return bao_cao_ngay(danh_sach_vb)
     
-    # Danh sách
     if "danh sách" in cau_hoi:
         return hien_thi_danh_sach(danh_sach_vb, cau_hoi)
     
-    # Hỏi số lượng
     if "bao nhiêu" in cau_hoi or "mấy" in cau_hoi:
         return dem_van_ban(danh_sach_vb, cau_hoi)
     
-    # Hỏi ngắn gọn: "sáng nay", "hôm nay",...
     if cau_hoi == "sáng nay":
         return dem_van_ban(danh_sach_vb, "sáng nay có bao nhiêu")
-    if cau_hoi == "trưa nay":
-        return dem_van_ban(danh_sach_vb, "trưa nay có bao nhiêu")
-    if cau_hoi == "chiều nay":
-        return dem_van_ban(danh_sach_vb, "chiều nay có bao nhiêu")
-    if cau_hoi == "tối nay":
-        return dem_van_ban(danh_sach_vb, "tối nay có bao nhiêu")
     if cau_hoi == "hôm nay":
         return dem_van_ban(danh_sach_vb, "hôm nay có bao nhiêu")
     if cau_hoi == "hôm qua":
         return dem_van_ban(danh_sach_vb, "hôm qua có bao nhiêu")
-    if cau_hoi == "tuần này":
-        return dem_van_ban(danh_sach_vb, "tuần này có bao nhiêu")
-    if cau_hoi == "tháng này":
-        return dem_van_ban(danh_sach_vb, "tháng này có bao nhiêu")
     
     return "❓ Tôi chưa hiểu. Bạn có thể hỏi:\n- thống kê\n- sáng nay\n- hôm nay\n- danh sách hôm nay"
 
 def hien_thi_danh_sach(danh_sach, cau_hoi):
     if "sáng nay" in cau_hoi:
         ds_loc = loc_theo_khung_gio(danh_sach, "sáng")
-        tieu_de = "☀️ DANH SÁCH VĂN BẢN SÁNG NAY"
-    elif "trưa nay" in cau_hoi:
-        ds_loc = loc_theo_khung_gio(danh_sach, "trưa")
-        tieu_de = "☀️ DANH SÁCH VĂN BẢN TRƯA NAY"
-    elif "chiều nay" in cau_hoi:
-        ds_loc = loc_theo_khung_gio(danh_sach, "chiều")
-        tieu_de = "🌤️ DANH SÁCH VĂN BẢN CHIỀU NAY"
-    elif "tối nay" in cau_hoi:
-        ds_loc = loc_theo_khung_gio(danh_sach, "tối")
-        tieu_de = "🌙 DANH SÁCH VĂN BẢN TỐI NAY"
+        tieu_de = "☀️ DANH SÁCH SÁNG NAY"
     elif "hôm nay" in cau_hoi:
         ngay_hom_nay = datetime.now().strftime("%d/%m/%Y")
         ds_loc = loc_theo_ngay(danh_sach, ngay_hom_nay)
-        tieu_de = f"📋 DANH SÁCH VĂN BẢN HÔM NAY ({ngay_hom_nay})"
-    elif "hôm qua" in cau_hoi:
-        ngay_hom_qua = (datetime.now() - timedelta(days=1)).strftime("%d/%m/%Y")
-        ds_loc = loc_theo_ngay(danh_sach, ngay_hom_qua)
-        tieu_de = f"📋 DANH SÁCH VĂN BẢN HÔM QUA ({ngay_hom_qua})"
-    elif "tuần này" in cau_hoi:
-        ds_loc = loc_theo_tuan(danh_sach)
-        tieu_de = "📋 DANH SÁCH VĂN BẢN TUẦN NÀY"
-    elif "tháng này" in cau_hoi:
-        ds_loc = loc_theo_thang(danh_sach)
-        tieu_de = "📋 DANH SÁCH VĂN BẢN THÁNG NÀY"
+        tieu_de = f"📋 DANH SÁCH HÔM NAY ({ngay_hom_nay})"
     else:
-        return "❓ Hãy nói rõ: 'danh sách sáng nay', 'danh sách hôm nay'"
+        return "❓ Hãy nói: 'danh sách sáng nay' hoặc 'danh sách hôm nay'"
     
     if not ds_loc:
         return f"{tieu_de}\n📭 Không có văn bản nào."
@@ -145,52 +90,46 @@ def hien_thi_danh_sach(danh_sach, cau_hoi):
 
 def dem_van_ban(danh_sach, cau_hoi):
     if "sáng nay" in cau_hoi:
-        so_luong = len(loc_theo_khung_gio(danh_sach, "sáng"))
-        return f"☀️ Sáng nay có {so_luong} văn bản đến."
-    if "trưa nay" in cau_hoi:
-        so_luong = len(loc_theo_khung_gio(danh_sach, "trưa"))
-        return f"☀️ Trưa nay có {so_luong} văn bản đến."
-    if "chiều nay" in cau_hoi:
-        so_luong = len(loc_theo_khung_gio(danh_sach, "chiều"))
-        return f"🌤️ Chiều nay có {so_luong} văn bản đến."
-    if "tối nay" in cau_hoi:
-        so_luong = len(loc_theo_khung_gio(danh_sach, "tối"))
-        return f"🌙 Tối nay có {so_luong} văn bản đến."
+        return f"☀️ Sáng nay có {len(loc_theo_khung_gio(danh_sach, 'sáng'))} văn bản."
     if "hôm nay" in cau_hoi:
         ngay_hom_nay = datetime.now().strftime("%d/%m/%Y")
-        so_luong = len(loc_theo_ngay(danh_sach, ngay_hom_nay))
-        return f"📅 Hôm nay ({ngay_hom_nay}) có {so_luong} văn bản đến."
+        return f"📅 Hôm nay ({ngay_hom_nay}) có {len(loc_theo_ngay(danh_sach, ngay_hom_nay))} văn bản."
     if "hôm qua" in cau_hoi:
         ngay_hom_qua = (datetime.now() - timedelta(days=1)).strftime("%d/%m/%Y")
-        so_luong = len(loc_theo_ngay(danh_sach, ngay_hom_qua))
-        return f"📅 Hôm qua ({ngay_hom_qua}) có {so_luong} văn bản đến."
-    if "tuần này" in cau_hoi:
-        so_luong = len(loc_theo_tuan(danh_sach))
-        return f"📅 Tuần này có {so_luong} văn bản đến."
-    if "tháng này" in cau_hoi:
-        so_luong = len(loc_theo_thang(danh_sach))
-        return f"📅 Tháng này có {so_luong} văn bản đến."
+        return f"📅 Hôm qua ({ngay_hom_qua}) có {len(loc_theo_ngay(danh_sach, ngay_hom_qua))} văn bản."
     return None
 
 def bao_cao_ngay(danh_sach):
     ngay_hom_nay = datetime.now().strftime("%d/%m/%Y")
     ds_hom_nay = loc_theo_ngay(danh_sach, ngay_hom_nay)
-    
     sang = len(loc_theo_khung_gio(ds_hom_nay, "sáng"))
-    trua = len(loc_theo_khung_gio(ds_hom_nay, "trưa"))
     chieu = len(loc_theo_khung_gio(ds_hom_nay, "chiều"))
-    toi = len(loc_theo_khung_gio(ds_hom_nay, "tối"))
-    
-    bc = f"📊 BÁO CÁO NGÀY {ngay_hom_nay}\n"
-    bc += "─────────────────\n"
-    bc += f"☀️ Sáng: {sang} văn bản\n"
-    bc += f"☀️ Trưa: {trua} văn bản\n"
-    bc += f"🌤️ Chiều: {chieu} văn bản\n"
-    bc += f"🌙 Tối: {toi} văn bản\n"
-    bc += "─────────────────\n"
-    bc += f"📌 Tổng: {len(ds_hom_nay)} văn bản"
-    return bc
+    return f"📊 {ngay_hom_nay}\n☀️ Sáng: {sang}\n🌤️ Chiều: {chieu}\n📌 Tổng: {len(ds_hom_nay)}"
 
-# Hàm chính để bot gọi
-def tra_loi_tin_nhan(noi_dung):
-    return xu_ly_cau_hoi(noi_dung)
+@app.route('/', methods=['POST'])
+def webhook():
+    data = request.get_json()
+    if data and 'message' in data:
+        chat_id = data['message']['chat']['id']
+        text = data['message'].get('text', '')
+        reply = xu_ly_cau_hoi(text)
+        send_message(chat_id, reply)
+    return 'OK', 200
+
+@app.route('/')
+def index():
+    return 'Bot is running!'
+
+def send_message(chat_id, text):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text}
+    try:
+        requests.post(url, json=payload)
+    except Exception as e:
+        print(e)
+
+if __name__ == '__main__':
+    import os
+    TOKEN = os.environ.get("TELEGRAM_TOKEN")
+    CHAT_ID = os.environ.get("CHAT_ID")
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
