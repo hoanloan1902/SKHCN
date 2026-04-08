@@ -15,6 +15,7 @@ import requests
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from bs4 import BeautifulSoup
+import telebot  # ĐÃ THÊM IMPORT NÀY
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -38,13 +39,12 @@ def tinh_ngay_con_lai(han_xu_ly: str) -> int:
     if not han_xu_ly or han_xu_ly == "Không có hạn":
         return 999
     try:
-        # Hỗ trợ nhiều định dạng ngày
         for fmt in ['%d/%m/%Y', '%d-%m-%Y', '%Y/%m/%d', '%Y-%m-%d']:
             try:
                 han_date = datetime.strptime(han_xu_ly.strip(), fmt)
                 today = datetime.now()
                 delta = (han_date - today).days
-                return max(delta, -1)  # -1 nếu đã quá hạn
+                return max(delta, -1)
             except:
                 continue
         return 999
@@ -152,7 +152,6 @@ def quet_van_ban_tu_html(session: requests.Session) -> List[Dict]:
         
         ket_qua = []
         
-        # Tìm tất cả các bảng
         tables = soup.find_all('table')
         for table in tables:
             rows = table.find_all('tr')
@@ -164,7 +163,6 @@ def quet_van_ban_tu_html(session: requests.Session) -> List[Dict]:
                 cols = [re.sub(r'\s+', ' ', td.get_text()).strip() for td in tds]
                 
                 for i, c in enumerate(cols):
-                    # Tìm cột ngày tháng
                     if re.match(r'^\d{2}[/-]\d{2}[/-]\d{4}$', c):
                         ngay = c
                         so_hieu = cols[i+1] if i+1 < len(cols) else ""
@@ -172,7 +170,6 @@ def quet_van_ban_tu_html(session: requests.Session) -> List[Dict]:
                         trich_yeu = cols[i+3] if i+3 < len(cols) else ""
                         han_xu_ly = cols[i+4] if i+4 < len(cols) else "Không có hạn"
                         
-                        # Làm sạch dữ liệu
                         so_hieu = so_hieu.replace('✅', '').replace('❌', '').strip()
                         trich_yeu = re.sub(r'[✅❌]', '', trich_yeu).strip()
                         
@@ -191,7 +188,7 @@ def quet_van_ban_tu_html(session: requests.Session) -> List[Dict]:
                             })
                         break
         
-        # Loại bỏ trùng lặp theo số hiệu
+        # Loại bỏ trùng lặp
         unique = {}
         for vb in ket_qua:
             if vb['so_hieu'] not in unique:
@@ -206,23 +203,19 @@ def quet_van_ban_tu_html(session: requests.Session) -> List[Dict]:
         return []
 
 # ==================== GỬI THÔNG BÁO ====================
-def gui_thong_bao_telegram(van_ban_moi: List[Dict], bot):
+def gui_thong_bao_telegram(van_ban_moi: List[Dict], bot_instance):
     """Gửi thông báo Telegram chi tiết"""
     if not van_ban_moi:
         return
     
-    # Thống kê số văn bản sắp hết hạn
     sap_het_han = [vb for vb in van_ban_moi if vb.get('ngay_con_lai', 999) <= 3]
     
-    # Tin nhắn tổng quan
     msg = f"🔔 *CÓ {len(van_ban_moi)} VĂN BẢN ĐẾN MỚI*\n\n"
     
     if sap_het_han:
         msg += f"⚠️ *Cảnh báo:* {len(sap_het_han)} văn bản có hạn xử lý trong 3 ngày tới\n\n"
     
-    # Liệt kê chi tiết 10 văn bản đầu
     for i, vb in enumerate(van_ban_moi[:10], 1):
-        # Thêm emoji cảnh báo nếu sắp hết hạn
         if vb.get('ngay_con_lai', 999) <= 1:
             emoji = "🔴"
             warn = f" *HẾT HẠN HÔM NAY!*"
@@ -247,16 +240,15 @@ def gui_thong_bao_telegram(van_ban_moi: List[Dict], bot):
         msg += f"📌 Gửi /list_all để xem toàn bộ"
     
     try:
-        bot.send_message(CHAT_ID, msg, parse_mode='Markdown')
+        bot_instance.send_message(CHAT_ID, msg, parse_mode='Markdown')
         print(f"✅ Đã gửi Telegram: {len(van_ban_moi)} văn bản")
     except Exception as e:
         print(f"❌ Lỗi gửi Telegram: {e}")
 
-def gui_bao_cao_hang_ngay(bot, danh_sach: List[Dict]):
+def gui_bao_cao_hang_ngay(bot_instance, danh_sach: List[Dict]):
     """Gửi báo cáo tổng hợp mỗi ngày lúc 8h sáng"""
     hom_nay = datetime.now().strftime('%d/%m/%Y')
     
-    # Thống kê theo hạn xử lý
     qua_han = [vb for vb in danh_sach if vb.get('ngay_con_lai', 999) < 0]
     hom_nay_het_han = [vb for vb in danh_sach if vb.get('ngay_con_lai', 999) == 0]
     sap_het_han = [vb for vb in danh_sach if 0 < vb.get('ngay_con_lai', 999) <= 3]
@@ -282,7 +274,7 @@ def gui_bao_cao_hang_ngay(bot, danh_sach: List[Dict]):
             msg += f"   - {vb['so_hieu']} (còn {vb['ngay_con_lai']} ngày)\n"
     
     try:
-        bot.send_message(CHAT_ID, msg, parse_mode='Markdown')
+        bot_instance.send_message(CHAT_ID, msg, parse_mode='Markdown')
     except Exception as e:
         print(f"❌ Lỗi gửi báo cáo: {e}")
 
@@ -290,18 +282,15 @@ def gui_bao_cao_hang_ngay(bot, danh_sach: List[Dict]):
 def main():
     print(f"🚀 Bắt đầu quét: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
     
-    # Kiểm tra biến môi trường
     if not USER_NAME or not PASS_WORD:
         print("❌ Thiếu tài khoản đăng nhập")
         return
     
-    # Đăng nhập
     session = requests.Session()
     if not domino_login(session):
         print("❌ Đăng nhập thất bại")
         return
     
-    # Quét danh sách văn bản
     danh_sach_moi_nhat = quet_van_ban_tu_html(session)
     if not danh_sach_moi_nhat:
         print("📭 Không lấy được dữ liệu")
@@ -309,28 +298,21 @@ def main():
     
     print(f"📊 Tổng số văn bản trong hệ thống: {len(danh_sach_moi_nhat)}")
     
-    # Đọc dữ liệu cũ
     da_gui = load_da_gui()
     danh_sach_cu = load_danh_sach_chi_tiet()
     
-    # Tìm văn bản mới
     so_hieu_cu = {vb['so_hieu'] for vb in danh_sach_cu}
     van_ban_moi = [vb for vb in danh_sach_moi_nhat if vb['so_hieu'] not in so_hieu_cu]
     
-    # Cập nhật danh sách đã gửi
     for vb in van_ban_moi:
         da_gui.add(vb['so_hieu'])
     
-    # Lưu toàn bộ dữ liệu
     save_full_data(da_gui, danh_sach_moi_nhat)
     
-    # Gửi thông báo nếu có văn bản mới
-    if van_ban_moi:
-        bot = telebot.TeleBot(TOKEN) if TOKEN else None
-        if bot:
-            gui_thong_bao_telegram(van_ban_moi, bot)
+    if van_ban_moi and TOKEN and CHAT_ID:
+        bot_instance = telebot.TeleBot(TOKEN)
+        gui_thong_bao_telegram(van_ban_moi, bot_instance)
         
-        # Lưu vào Google Sheets nếu có
         sheet = ket_noi_sheets()
         if sheet:
             try:
@@ -344,12 +326,10 @@ def main():
             except Exception as e:
                 print(f"⚠️ Lỗi lưu Sheets: {e}")
     
-    # Gửi báo cáo hàng ngày (8h sáng)
     now = datetime.now()
-    if now.hour == 8 and now.minute < 30:
-        bot = telebot.TeleBot(TOKEN) if TOKEN else None
-        if bot:
-            gui_bao_cao_hang_ngay(bot, danh_sach_moi_nhat)
+    if now.hour == 8 and now.minute < 30 and TOKEN and CHAT_ID:
+        bot_instance = telebot.TeleBot(TOKEN)
+        gui_bao_cao_hang_ngay(bot_instance, danh_sach_moi_nhat)
     
     print(f"✅ Hoàn thành! Thêm {len(van_ban_moi)} văn bản mới")
 
