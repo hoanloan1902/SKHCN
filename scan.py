@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bot quét văn bản đến từ HSCV - Hỗ trợ hạn xử lý và lưu đầy đủ thông tin
+Bot quét văn bản đến từ HSCV - Gửi thông báo ĐẦY ĐỦ thông tin
 """
 
 import os
@@ -28,25 +28,14 @@ CHAT_ID = os.environ.get("CHAT_ID")
 SHEET_NAME = "DANH_SACH_VAN_BAN"
 DA_GUI_FILE = "da_gui.json"
 
-# URL hệ thống
 BASE_URL = "https://hscvkhcn.dienbien.gov.vn"
 DB_PATH = "/qlvb/vbden.nsf"
 VIEW_NAME = "Private_ChoXL_KoHan"
 
 # ==================== HÀM TIỆN ÍCH ====================
-def escape_markdown(text: str) -> str:
-    """Escape ký tự đặc biệt trong Markdown"""
-    if not text:
-        return ""
-    # Các ký tự cần escape trong Telegram Markdown
-    special_chars = r'_*[]()~`>#+-=|{}.!'
-    for char in special_chars:
-        text = text.replace(char, f'\\{char}')
-    return text
-
 def tinh_ngay_con_lai(han_xu_ly: str) -> int:
     """Tính số ngày còn lại đến hạn xử lý"""
-    if not han_xu_ly or han_xu_ly == "Không có hạn":
+    if not han_xu_ly or han_xu_ly == "Không có hạn" or han_xu_ly == "":
         return 999
     try:
         for fmt in ['%d/%m/%Y', '%d-%m-%Y', '%Y/%m/%d', '%Y-%m-%d']:
@@ -61,16 +50,20 @@ def tinh_ngay_con_lai(han_xu_ly: str) -> int:
     except:
         return 999
 
-def tach_chu_ky(so_hieu: str) -> str:
-    """Tách số và ký hiệu văn bản"""
-    match = re.match(r'^(\d+)/([A-Za-z0-9\-]+)', so_hieu)
-    if match:
-        return f"Số {match.group(1)} - {match.group(2)}"
-    return so_hieu
+def safe_text(text: str, max_len: int = 200) -> str:
+    """Làm sạch văn bản, loại bỏ ký tự lạ"""
+    if not text:
+        return ""
+    # Loại bỏ emoji và ký tự đặc biệt
+    text = re.sub(r'[✅❌⚠️🔔📌🏢📝📅⏰🟡🔴🟢⚪]', '', text)
+    text = text.replace('_', ' ').replace('*', ' ').replace('`', ' ')
+    text = ' '.join(text.split())
+    if len(text) > max_len:
+        text = text[:max_len] + "..."
+    return text.strip()
 
 # ==================== ĐỌC/GHI JSON ====================
 def load_da_gui() -> Set[str]:
-    """Đọc danh sách văn bản đã gửi"""
     if os.path.exists(DA_GUI_FILE):
         try:
             with open(DA_GUI_FILE, 'r', encoding='utf-8') as f:
@@ -81,7 +74,6 @@ def load_da_gui() -> Set[str]:
     return set()
 
 def load_danh_sach_chi_tiet() -> List[Dict]:
-    """Đọc danh sách chi tiết văn bản"""
     if os.path.exists(DA_GUI_FILE):
         try:
             with open(DA_GUI_FILE, 'r', encoding='utf-8') as f:
@@ -92,7 +84,6 @@ def load_danh_sach_chi_tiet() -> List[Dict]:
     return []
 
 def save_full_data(da_gui: Set[str], danh_sach_chi_tiet: List[Dict]):
-    """Lưu đầy đủ dữ liệu vào JSON"""
     try:
         data = {
             'da_gui': list(da_gui),
@@ -108,7 +99,6 @@ def save_full_data(da_gui: Set[str], danh_sach_chi_tiet: List[Dict]):
 
 # ==================== KẾT NỐI GOOGLE SHEETS ====================
 def ket_noi_sheets():
-    """Kết nối Google Sheets (backup)"""
     if not GOOGLE_JSON:
         return None
     try:
@@ -124,7 +114,6 @@ def ket_noi_sheets():
 
 # ==================== ĐĂNG NHẬP DOMINO ====================
 def domino_login(session: requests.Session) -> bool:
-    """Đăng nhập Domino"""
     login_url = f"{BASE_URL}/names.nsf?Login"
     
     payload = {
@@ -150,9 +139,8 @@ def domino_login(session: requests.Session) -> bool:
         print(f"❌ Lỗi đăng nhập: {e}")
         return False
 
-# ==================== QUÉT HTML (CHÍNH) ====================
+# ==================== QUÉT HTML ====================
 def quet_van_ban_tu_html(session: requests.Session) -> List[Dict]:
-    """Quét danh sách văn bản từ HTML"""
     url_target = f"{BASE_URL}{DB_PATH}/{VIEW_NAME}?OpenForm"
     
     try:
@@ -180,6 +168,7 @@ def quet_van_ban_tu_html(session: requests.Session) -> List[Dict]:
                         trich_yeu = cols[i+3] if i+3 < len(cols) else ""
                         han_xu_ly = cols[i+4] if i+4 < len(cols) else "Không có hạn"
                         
+                        # Làm sạch dữ liệu
                         so_hieu = so_hieu.replace('✅', '').replace('❌', '').strip()
                         trich_yeu = re.sub(r'[✅❌]', '', trich_yeu).strip()
                         
@@ -188,12 +177,11 @@ def quet_van_ban_tu_html(session: requests.Session) -> List[Dict]:
                             
                             ket_qua.append({
                                 'so_hieu': so_hieu,
-                                'so_hieu_dep': tach_chu_ky(so_hieu),
                                 'ngay': ngay,
                                 'han_xu_ly': han_xu_ly,
                                 'ngay_con_lai': ngay_con_lai,
-                                'trich_yeu': trich_yeu[:250],
-                                'co_quan': co_quan,
+                                'trich_yeu': safe_text(trich_yeu, 150),
+                                'co_quan': safe_text(co_quan, 100),
                                 'trang_thai': 'Đang chờ xử lý'
                             })
                         break
@@ -212,93 +200,84 @@ def quet_van_ban_tu_html(session: requests.Session) -> List[Dict]:
         print(f"❌ Lỗi quét HTML: {e}")
         return []
 
-# ==================== GỬI THÔNG BÁO ====================
+# ==================== GỬI THÔNG BÁO ĐẦY ĐỦ ====================
 def gui_thong_bao_telegram(van_ban_moi: List[Dict], bot_instance):
-    """Gửi thông báo Telegram chi tiết - ĐÃ FIX LỖI MARKDOWN"""
+    """Gửi thông báo Telegram với ĐẦY ĐỦ thông tin"""
     if not van_ban_moi:
         return
     
-    sap_het_han = [vb for vb in van_ban_moi if vb.get('ngay_con_lai', 999) <= 3]
-    
-    msg = f"🔔 *CÓ {len(van_ban_moi)} VĂN BẢN ĐẾN MỚI*\n\n"
-    
-    if sap_het_han:
-        msg += f"⚠️ *Cảnh báo:* {len(sap_het_han)} văn bản có hạn xử lý trong 3 ngày tới\n\n"
-    
-    for i, vb in enumerate(van_ban_moi[:10], 1):
-        # Escape các ký tự đặc biệt
-        so_hieu_escaped = escape_markdown(vb['so_hieu'])
-        co_quan_escaped = escape_markdown(vb['co_quan'])
-        trich_yeu_escaped = escape_markdown(vb['trich_yeu'][:100])
+    # Gửi từng văn bản một để hiển thị đầy đủ thông tin
+    for vb in van_ban_moi:
+        # Tạo tin nhắn chi tiết cho từng văn bản
+        msg = f"📄 *VĂN BẢN ĐẾN MỚI*\n\n"
+        msg += f"*Số hiệu:* `{vb['so_hieu']}`\n"
+        msg += f"*Ngày đến:* {vb['ngay']}\n"
         
-        if vb.get('ngay_con_lai', 999) <= 1:
-            emoji = "🔴"
-            warn = f" *HẾT HẠN HÔM NAY\!*"
-        elif vb.get('ngay_con_lai', 999) <= 3:
-            emoji = "🟡"
-            warn = f" *Còn {vb['ngay_con_lai']} ngày*"
-        else:
-            emoji = "📄"
-            warn = ""
-        
-        msg += f"{emoji} *{so_hieu_escaped}*\n"
-        msg += f"   📅 Ngày: {vb['ngay']}"
+        # Thông tin hạn xử lý
         if vb.get('han_xu_ly') and vb['han_xu_ly'] != "Không có hạn":
-            han_escaped = escape_markdown(vb['han_xu_ly'])
-            msg += f" | ⏰ Hạn: {han_escaped}{warn}\n"
+            ngay_con = vb.get('ngay_con_lai', 999)
+            if ngay_con < 0:
+                msg += f"*Hạn xử lý:* 🔴 {vb['han_xu_ly']} (QUÁ HẠN {abs(ngay_con)} ngày)\n"
+            elif ngay_con == 0:
+                msg += f"*Hạn xử lý:* 🔴 {vb['han_xu_ly']} (HẾT HẠN HÔM NAY)\n"
+            elif ngay_con <= 3:
+                msg += f"*Hạn xử lý:* 🟡 {vb['han_xu_ly']} (Còn {ngay_con} ngày)\n"
+            else:
+                msg += f"*Hạn xử lý:* {vb['han_xu_ly']}\n"
         else:
-            msg += f"\n"
-        msg += f"   🏢 {co_quan_escaped}\n"
-        msg += f"   📝 {trich_yeu_escaped}...\n\n"
-    
-    if len(van_ban_moi) > 10:
-        msg += f"... và {len(van_ban_moi) - 10} văn bản khác\n"
-        msg += f"📌 Gửi /list\\_all để xem toàn bộ"
-    
-    try:
-        bot_instance.send_message(CHAT_ID, msg, parse_mode='MarkdownV2')
-        print(f"✅ Đã gửi Telegram: {len(van_ban_moi)} văn bản")
-    except Exception as e:
-        # Nếu lỗi MarkdownV2, thử gửi text thường
-        print(f"⚠️ Lỗi MarkdownV2: {e}, thử gửi text thường...")
+            msg += f"*Hạn xử lý:* ⚪ Không có hạn\n"
+        
+        msg += f"*Cơ quan gửi:* {vb['co_quan']}\n"
+        msg += f"*Trích yếu:* {vb['trich_yeu']}\n"
+        
         try:
-            msg_plain = f"🔔 CÓ {len(van_ban_moi)} VĂN BẢN ĐẾN MỚI\n\n"
-            for vb in van_ban_moi[:5]:
-                msg_plain += f"- {vb['so_hieu']} - {vb['co_quan']}\n"
-            bot_instance.send_message(CHAT_ID, msg_plain)
-        except:
-            print(f"❌ Lỗi gửi Telegram text thường")
+            bot_instance.send_message(CHAT_ID, msg, parse_mode='Markdown')
+            time.sleep(0.5)  # Tránh spam
+        except Exception as e:
+            # Nếu lỗi Markdown, gửi text thường
+            try:
+                msg_plain = f"📄 VĂN BẢN ĐẾN MỚI\n\nSố hiệu: {vb['so_hieu']}\nNgày đến: {vb['ngay']}\nCơ quan: {vb['co_quan']}\nTrích yếu: {vb['trich_yeu']}"
+                bot_instance.send_message(CHAT_ID, msg_plain)
+            except:
+                print(f"❌ Lỗi gửi {vb['so_hieu']}: {e}")
+        
+        print(f"✅ Đã gửi: {vb['so_hieu']}")
+    
+    # Gửi tin nhắn tổng kết
+    summary = f"✅ *Đã thêm {len(van_ban_moi)} văn bản mới vào hệ thống*"
+    try:
+        bot_instance.send_message(CHAT_ID, summary, parse_mode='Markdown')
+    except:
+        pass
 
 def gui_bao_cao_hang_ngay(bot_instance, danh_sach: List[Dict]):
-    """Gửi báo cáo tổng hợp mỗi ngày lúc 8h sáng"""
+    """Gửi báo cáo tổng hợp hàng ngày"""
     hom_nay = datetime.now().strftime('%d/%m/%Y')
     
+    # Đếm số văn bản đến hôm nay
+    vb_hom_nay = [vb for vb in danh_sach if vb.get('ngay') == hom_nay]
+    
+    # Đếm theo hạn xử lý
     qua_han = [vb for vb in danh_sach if vb.get('ngay_con_lai', 999) < 0]
-    hom_nay_het_han = [vb for vb in danh_sach if vb.get('ngay_con_lai', 999) == 0]
-    sap_het_han = [vb for vb in danh_sach if 0 < vb.get('ngay_con_lai', 999) <= 3]
+    sap_het_han = [vb for vb in danh_sach if 0 <= vb.get('ngay_con_lai', 999) <= 3]
     
     msg = f"📊 *BÁO CÁO HÀNG NGÀY - {hom_nay}*\n\n"
-    msg += f"📋 Tổng số văn bản đang chờ: {len(danh_sach)}\n\n"
+    msg += f"📋 Tổng số văn bản đang chờ: *{len(danh_sach)}*\n"
+    msg += f"📅 Văn bản đến hôm nay: *{len(vb_hom_nay)}*\n\n"
     
     if qua_han:
-        msg += f"🔴 *QUÁ HẠN:* {len(qua_han)} văn bản\n"
+        msg += f"🔴 *QUÁ HẠN XỬ LÝ:* {len(qua_han)} văn bản\n"
         for vb in qua_han[:5]:
-            msg += f"   - {escape_markdown(vb['so_hieu'])} (quá hạn {abs(vb['ngay_con_lai'])} ngày)\n"
-        msg += "\n"
-    
-    if hom_nay_het_han:
-        msg += f"⚠️ *HẾT HẠN HÔM NAY:* {len(hom_nay_het_han)} văn bản\n"
-        for vb in hom_nay_het_han[:5]:
-            msg += f"   - {escape_markdown(vb['so_hieu'])}\n"
+            msg += f"   • {vb['so_hieu']} (quá hạn {abs(vb['ngay_con_lai'])} ngày)\n"
         msg += "\n"
     
     if sap_het_han:
-        msg += f"🟡 *SẮP HẾT HẠN (3 ngày tới):* {len(sap_het_han)} văn bản\n"
+        msg += f"🟡 *SẮP HẾT HẠN:* {len(sap_het_han)} văn bản\n"
         for vb in sap_het_han[:5]:
-            msg += f"   - {escape_markdown(vb['so_hieu'])} (còn {vb['ngay_con_lai']} ngày)\n"
+            msg += f"   • {vb['so_hieu']} (còn {vb['ngay_con_lai']} ngày)\n"
     
     try:
-        bot_instance.send_message(CHAT_ID, msg, parse_mode='MarkdownV2')
+        bot_instance.send_message(CHAT_ID, msg, parse_mode='Markdown')
     except Exception as e:
         print(f"❌ Lỗi gửi báo cáo: {e}")
 
@@ -328,6 +307,8 @@ def main():
     so_hieu_cu = {vb['so_hieu'] for vb in danh_sach_cu}
     van_ban_moi = [vb for vb in danh_sach_moi_nhat if vb['so_hieu'] not in so_hieu_cu]
     
+    print(f"🆕 Số văn bản mới: {len(van_ban_moi)}")
+    
     for vb in van_ban_moi:
         da_gui.add(vb['so_hieu'])
     
@@ -337,6 +318,7 @@ def main():
         bot_instance = telebot.TeleBot(TOKEN)
         gui_thong_bao_telegram(van_ban_moi, bot_instance)
         
+        # Lưu vào Google Sheets
         sheet = ket_noi_sheets()
         if sheet:
             try:
@@ -350,6 +332,7 @@ def main():
             except Exception as e:
                 print(f"⚠️ Lỗi lưu Sheets: {e}")
     
+    # Báo cáo hàng ngày lúc 8h
     now = datetime.now()
     if now.hour == 8 and now.minute < 30 and TOKEN and CHAT_ID:
         bot_instance = telebot.TeleBot(TOKEN)
