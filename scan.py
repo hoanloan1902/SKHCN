@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bot quét văn bản đến từ HSCV - Dùng API Domino ReadViewEntries
+Bot quét văn bản đến từ HSCV - Hỗ trợ hạn xử lý và lưu đầy đủ thông tin
 """
 
 import os
@@ -8,16 +8,17 @@ import json
 import re
 import time
 from datetime import datetime, timedelta
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set
 import urllib3
 
 import requests
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import telebot
+from bs4 import BeautifulSoup
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==================== CẤU HÌNH ====================
-# Đọc từ environment variables
 USER_NAME = os.environ.get("SKHCN_USER")
 PASS_WORD = os.environ.get("SKHCN_PASS")
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -26,39 +27,79 @@ CHAT_ID = os.environ.get("CHAT_ID")
 SHEET_NAME = "DANH_SACH_VAN_BAN"
 DA_GUI_FILE = "da_gui.json"
 
-# URL hệ thống (có thể cần chỉnh theo thực tế)
+# URL hệ thống
 BASE_URL = "https://hscvkhcn.dienbien.gov.vn"
 DB_PATH = "/qlvb/vbden.nsf"
 VIEW_NAME = "Private_ChoXL_KoHan"
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# ==================== HÀM TIỆN ÍCH ====================
+def tinh_ngay_con_lai(han_xu_ly: str) -> int:
+    """Tính số ngày còn lại đến hạn xử lý"""
+    if not han_xu_ly or han_xu_ly == "Không có hạn":
+        return 999
+    try:
+        # Hỗ trợ nhiều định dạng ngày
+        for fmt in ['%d/%m/%Y', '%d-%m-%Y', '%Y/%m/%d', '%Y-%m-%d']:
+            try:
+                han_date = datetime.strptime(han_xu_ly.strip(), fmt)
+                today = datetime.now()
+                delta = (han_date - today).days
+                return max(delta, -1)  # -1 nếu đã quá hạn
+            except:
+                continue
+        return 999
+    except:
+        return 999
+
+def tach_chu_ky(so_hieu: str) -> str:
+    """Tách số và ký hiệu văn bản"""
+    match = re.match(r'^(\d+)/([A-Za-z0-9\-]+)', so_hieu)
+    if match:
+        return f"Số {match.group(1)} - {match.group(2)}"
+    return so_hieu
 
 # ==================== ĐỌC/GHI JSON ====================
-def load_da_gui() -> set:
-    """Đọc danh sách văn bản đã gửi từ file JSON"""
+def load_da_gui() -> Set[str]:
+    """Đọc danh sách văn bản đã gửi"""
     if os.path.exists(DA_GUI_FILE):
         try:
             with open(DA_GUI_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 return set(data.get('da_gui', []))
-        except Exception as e:
-            print(f"⚠️ Lỗi đọc da_gui.json: {e}")
+        except:
+            pass
     return set()
 
-def save_da_gui(da_gui: set):
-    """Lưu danh sách văn bản đã gửi vào file JSON"""
+def load_danh_sach_chi_tiet() -> List[Dict]:
+    """Đọc danh sách chi tiết văn bản"""
+    if os.path.exists(DA_GUI_FILE):
+        try:
+            with open(DA_GUI_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get('danh_sach_chi_tiet', [])
+        except:
+            pass
+    return []
+
+def save_full_data(da_gui: Set[str], danh_sach_chi_tiet: List[Dict]):
+    """Lưu đầy đủ dữ liệu vào JSON"""
     try:
+        data = {
+            'da_gui': list(da_gui),
+            'danh_sach_chi_tiet': danh_sach_chi_tiet,
+            'last_update': datetime.now().isoformat(),
+            'total_count': len(danh_sach_chi_tiet)
+        }
         with open(DA_GUI_FILE, 'w', encoding='utf-8') as f:
-            json.dump({'da_gui': list(da_gui), 'last_update': datetime.now().isoformat()}, 
-                     f, ensure_ascii=False, indent=2)
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        print(f"✅ Đã lưu {len(danh_sach_chi_tiet)} văn bản vào JSON")
     except Exception as e:
-        print(f"⚠️ Lỗi ghi da_gui.json: {e}")
+        print(f"❌ Lỗi lưu JSON: {e}")
 
 # ==================== KẾT NỐI GOOGLE SHEETS ====================
 def ket_noi_sheets():
-    """Kết nối Google Sheets (dùng làm backup lưu trữ)"""
+    """Kết nối Google Sheets (backup)"""
     if not GOOGLE_JSON:
-        print("⚠️ Không có GOOGLE_JSON, bỏ qua Sheets")
         return None
     try:
         scope = ["https://spreadsheets.google.com/feeds",
@@ -68,12 +109,12 @@ def ket_noi_sheets():
         client = gspread.authorize(creds)
         return client.open(SHEET_NAME)
     except Exception as e:
-        print(f"❌ Lỗi kết nối Sheets: {e}")
+        print(f"⚠️ Lỗi Sheets: {e}")
         return None
 
 # ==================== ĐĂNG NHẬP DOMINO ====================
 def domino_login(session: requests.Session) -> bool:
-    """Đăng nhập vào hệ thống Domino"""
+    """Đăng nhập Domino"""
     login_url = f"{BASE_URL}/names.nsf?Login"
     
     payload = {
@@ -90,191 +131,160 @@ def domino_login(session: requests.Session) -> bool:
     try:
         response = session.post(login_url, data=payload, 
                                 headers=headers, verify=False, timeout=30)
-        
-        # Kiểm tra đăng nhập thành công
         if response.status_code == 200 and "Login" not in response.text:
-            print("✅ Đăng nhập Domino thành công")
+            print("✅ Đăng nhập thành công")
             return True
-        else:
-            print(f"❌ Đăng nhập thất bại: status {response.status_code}")
-            return False
-            
+        print(f"❌ Đăng nhập thất bại: {response.status_code}")
+        return False
     except Exception as e:
         print(f"❌ Lỗi đăng nhập: {e}")
         return False
 
-# ==================== QUA HTML (FALLBACK KHI API LỖI) ====================
-def parse_html_table(html_content: str) -> List[Dict]:
-    """Parse HTML table để lấy danh sách văn bản (fallback)"""
-    from bs4 import BeautifulSoup
-    soup = BeautifulSoup(html_content, 'html.parser')
-    
-    ket_qua = []
-    for row in soup.find_all('tr'):
-        tds = row.find_all('td')
-        if len(tds) < 5:
-            continue
-        
-        cols = [re.sub(r'\s+', ' ', td.get_text()).strip() for td in tds]
-        
-        for i, c in enumerate(cols):
-            if re.match(r'^\d{2}/\d{2}/\d{4}$', c):
-                so_hieu = cols[i+1] if i+1 < len(cols) else ""
-                co_quan = cols[i+2] if i+2 < len(cols) else ""
-                trich_yeu = cols[i+3] if i+3 < len(cols) else ""
-                
-                if so_hieu and ("/" in so_hieu or "-" in so_hieu):
-                    ket_qua.append({
-                        'so_hieu': so_hieu,
-                        'ngay': c,
-                        'trich_yeu': trich_yeu[:200],
-                        'co_quan': co_quan
-                    })
-                break
-    
-    return ket_qua
-
-def quet_qua_html(session: requests.Session) -> List[Dict]:
-    """Quét qua HTML (fallback khi API không hoạt động)"""
+# ==================== QUÉT HTML (CHÍNH) ====================
+def quet_van_ban_tu_html(session: requests.Session) -> List[Dict]:
+    """Quét danh sách văn bản từ HTML"""
     url_target = f"{BASE_URL}{DB_PATH}/{VIEW_NAME}?OpenForm"
     
     try:
         response = session.get(url_target, verify=False, timeout=30)
-        response.encoding = response.apparent_encoding
-        return parse_html_table(response.text)
+        response.encoding = 'utf-8'
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        ket_qua = []
+        
+        # Tìm tất cả các bảng
+        tables = soup.find_all('table')
+        for table in tables:
+            rows = table.find_all('tr')
+            for row in rows:
+                tds = row.find_all('td')
+                if len(tds) < 5:
+                    continue
+                
+                cols = [re.sub(r'\s+', ' ', td.get_text()).strip() for td in tds]
+                
+                for i, c in enumerate(cols):
+                    # Tìm cột ngày tháng
+                    if re.match(r'^\d{2}[/-]\d{2}[/-]\d{4}$', c):
+                        ngay = c
+                        so_hieu = cols[i+1] if i+1 < len(cols) else ""
+                        co_quan = cols[i+2] if i+2 < len(cols) else ""
+                        trich_yeu = cols[i+3] if i+3 < len(cols) else ""
+                        han_xu_ly = cols[i+4] if i+4 < len(cols) else "Không có hạn"
+                        
+                        # Làm sạch dữ liệu
+                        so_hieu = so_hieu.replace('✅', '').replace('❌', '').strip()
+                        trich_yeu = re.sub(r'[✅❌]', '', trich_yeu).strip()
+                        
+                        if so_hieu and ("/" in so_hieu or "-" in so_hieu):
+                            ngay_con_lai = tinh_ngay_con_lai(han_xu_ly)
+                            
+                            ket_qua.append({
+                                'so_hieu': so_hieu,
+                                'so_hieu_dep': tach_chu_ky(so_hieu),
+                                'ngay': ngay,
+                                'han_xu_ly': han_xu_ly,
+                                'ngay_con_lai': ngay_con_lai,
+                                'trich_yeu': trich_yeu[:250],
+                                'co_quan': co_quan,
+                                'trang_thai': 'Đang chờ xử lý'
+                            })
+                        break
+        
+        # Loại bỏ trùng lặp theo số hiệu
+        unique = {}
+        for vb in ket_qua:
+            if vb['so_hieu'] not in unique:
+                unique[vb['so_hieu']] = vb
+        
+        danh_sach = list(unique.values())
+        print(f"📊 Quét HTML: {len(danh_sach)} văn bản")
+        return danh_sach
+        
     except Exception as e:
         print(f"❌ Lỗi quét HTML: {e}")
         return []
 
-# ==================== QUA API READVIEWENTRIES ====================
-def lay_danh_sach_qua_api(session: requests.Session, 
-                           tu_ngay: str = None, 
-                           den_ngay: str = None) -> List[Dict]:
-    """
-    Lấy danh sách qua API ReadViewEntries
-    tu_ngay, den_ngay format: YYYYMMDD
-    """
-    api_url = f"{BASE_URL}{DB_PATH}/{VIEW_NAME}?ReadViewEntries"
-    
-    params = {
-        'Count': '100',  # Giới hạn số lượng
-    }
-    
-    # Thêm filter theo ngày nếu có
-    if tu_ngay and den_ngay:
-        params['StartKey'] = f"{tu_ngay}T000000Z"
-        params['UntilKey'] = f"{den_ngay}T235959Z"
-        params['KeyType'] = 'time'
-    
-    try:
-        response = session.get(api_url, params=params, verify=False, timeout=30)
-        
-        if response.status_code != 200:
-            print(f"⚠️ API trả về status {response.status_code}, fallback sang HTML")
-            return None
-        
-        # Thử parse XML
-        import xml.etree.ElementTree as ET
-        try:
-            root = ET.fromstring(response.content)
-            danh_sach = []
-            
-            for entry in root.findall('.//viewentry'):
-                so_hieu = ""
-                ngay = ""
-                co_quan = ""
-                trich_yeu = ""
-                
-                for i, entrydata in enumerate(entry.findall('.//entrydata')):
-                    value = entrydata.text or ""
-                    if i == 0:
-                        so_hieu = value.strip()
-                    elif i == 1:
-                        ngay = value.strip()
-                    elif i == 2:
-                        co_quan = value.strip()
-                    elif i == 3:
-                        trich_yeu = value.strip()[:200]
-                
-                if so_hieu:
-                    danh_sach.append({
-                        'so_hieu': so_hieu,
-                        'ngay': ngay,
-                        'trich_yeu': trich_yeu,
-                        'co_quan': co_quan
-                    })
-            
-            print(f"📊 API trả về {len(danh_sach)} văn bản")
-            return danh_sach
-            
-        except ET.ParseError:
-            print("⚠️ Không parse được XML API, fallback sang HTML")
-            return None
-            
-    except Exception as e:
-        print(f"⚠️ Lỗi API: {e}, fallback sang HTML")
-        return None
-
-# ==================== LẤY DANH SÁCH CHÍNH ====================
-def lay_danh_sach_van_ban(session: requests.Session) -> List[Dict]:
-    """Lấy danh sách văn bản (ưu tiên API, fallback HTML)"""
-    hom_nay = datetime.now()
-    tu_ngay = (hom_nay - timedelta(days=7)).strftime("%Y%m%d")
-    den_ngay = hom_nay.strftime("%Y%m%d")
-    
-    # Thử API trước
-    danh_sach = lay_danh_sach_qua_api(session, tu_ngay, den_ngay)
-    
-    # Fallback sang HTML nếu API lỗi
-    if danh_sach is None:
-        print("🔄 Chuyển sang chế độ quét HTML...")
-        danh_sach = quet_qua_html(session)
-    
-    return danh_sach or []
-
 # ==================== GỬI THÔNG BÁO ====================
-def gui_thong_bao(van_ban_moi: List[Dict]):
-    """Gửi thông báo Telegram"""
+def gui_thong_bao_telegram(van_ban_moi: List[Dict], bot):
+    """Gửi thông báo Telegram chi tiết"""
     if not van_ban_moi:
         return
     
-    bot = telebot.TeleBot(TOKEN)
+    # Thống kê số văn bản sắp hết hạn
+    sap_het_han = [vb for vb in van_ban_moi if vb.get('ngay_con_lai', 999) <= 3]
     
-    # Nhóm tin nhắn để tránh spam
-    if len(van_ban_moi) == 1:
-        vb = van_ban_moi[0]
-        msg = (f"🔔 *VĂN BẢN ĐẾN MỚI*\n\n"
-               f"📌 *Số hiệu:* `{vb['so_hieu']}`\n"
-               f"📅 *Ngày:* {vb['ngay']}\n"
-               f"🏢 *Cơ quan gửi:* {vb['co_quan']}\n"
-               f"📝 *Trích yếu:* {vb['trich_yeu'][:150]}...")
-    else:
-        msg = f"🔔 *CÓ {len(van_ban_moi)} VĂN BẢN ĐẾN MỚI*\n\n"
-        for i, vb in enumerate(van_ban_moi[:5], 1):
-            msg += f"{i}. `{vb['so_hieu']}` - {vb['co_quan']}\n"
-            msg += f"   📝 {vb['trich_yeu'][:80]}...\n\n"
-        if len(van_ban_moi) > 5:
-            msg += f"... và {len(van_ban_moi) - 5} văn bản khác"
+    # Tin nhắn tổng quan
+    msg = f"🔔 *CÓ {len(van_ban_moi)} VĂN BẢN ĐẾN MỚI*\n\n"
+    
+    if sap_het_han:
+        msg += f"⚠️ *Cảnh báo:* {len(sap_het_han)} văn bản có hạn xử lý trong 3 ngày tới\n\n"
+    
+    # Liệt kê chi tiết 10 văn bản đầu
+    for i, vb in enumerate(van_ban_moi[:10], 1):
+        # Thêm emoji cảnh báo nếu sắp hết hạn
+        if vb.get('ngay_con_lai', 999) <= 1:
+            emoji = "🔴"
+            warn = f" *HẾT HẠN HÔM NAY!*"
+        elif vb.get('ngay_con_lai', 999) <= 3:
+            emoji = "🟡"
+            warn = f" *Còn {vb['ngay_con_lai']} ngày*"
+        else:
+            emoji = "📄"
+            warn = ""
+        
+        msg += f"{emoji} *{vb['so_hieu']}*\n"
+        msg += f"   📅 Ngày: {vb['ngay']}"
+        if vb.get('han_xu_ly') and vb['han_xu_ly'] != "Không có hạn":
+            msg += f" | ⏰ Hạn: {vb['han_xu_ly']}{warn}\n"
+        else:
+            msg += f"\n"
+        msg += f"   🏢 {vb['co_quan']}\n"
+        msg += f"   📝 {vb['trich_yeu'][:100]}...\n\n"
+    
+    if len(van_ban_moi) > 10:
+        msg += f"... và {len(van_ban_moi) - 10} văn bản khác\n"
+        msg += f"📌 Gửi /list_all để xem toàn bộ"
     
     try:
         bot.send_message(CHAT_ID, msg, parse_mode='Markdown')
-        print(f"✅ Đã gửi {len(van_ban_moi)} thông báo")
+        print(f"✅ Đã gửi Telegram: {len(van_ban_moi)} văn bản")
     except Exception as e:
         print(f"❌ Lỗi gửi Telegram: {e}")
 
-# ==================== LUU VAO GOOGLE SHEETS ====================
-def luu_vao_sheets(sheet, van_ban_moi: List[Dict]):
-    """Lưu văn bản mới vào Google Sheets"""
-    if not sheet:
-        return
+def gui_bao_cao_hang_ngay(bot, danh_sach: List[Dict]):
+    """Gửi báo cáo tổng hợp mỗi ngày lúc 8h sáng"""
+    hom_nay = datetime.now().strftime('%d/%m/%Y')
     
-    for vb in van_ban_moi:
-        try:
-            row = [vb['so_hieu'], vb['ngay'], vb['trich_yeu'], vb['co_quan']]
-            sheet.insert_row(row, 2)
-            time.sleep(0.5)
-        except Exception as e:
-            print(f"⚠️ Không lưu được {vb['so_hieu']} vào Sheets: {e}")
+    # Thống kê theo hạn xử lý
+    qua_han = [vb for vb in danh_sach if vb.get('ngay_con_lai', 999) < 0]
+    hom_nay_het_han = [vb for vb in danh_sach if vb.get('ngay_con_lai', 999) == 0]
+    sap_het_han = [vb for vb in danh_sach if 0 < vb.get('ngay_con_lai', 999) <= 3]
+    
+    msg = f"📊 *BÁO CÁO HÀNG NGÀY - {hom_nay}*\n\n"
+    msg += f"📋 Tổng số văn bản đang chờ: {len(danh_sach)}\n\n"
+    
+    if qua_han:
+        msg += f"🔴 *QUÁ HẠN:* {len(qua_han)} văn bản\n"
+        for vb in qua_han[:5]:
+            msg += f"   - {vb['so_hieu']} (quá hạn {abs(vb['ngay_con_lai'])} ngày)\n"
+        msg += "\n"
+    
+    if hom_nay_het_han:
+        msg += f"⚠️ *HẾT HẠN HÔM NAY:* {len(hom_nay_het_han)} văn bản\n"
+        for vb in hom_nay_het_han[:5]:
+            msg += f"   - {vb['so_hieu']}\n"
+        msg += "\n"
+    
+    if sap_het_han:
+        msg += f"🟡 *SẮP HẾT HẠN (3 ngày tới):* {len(sap_het_han)} văn bản\n"
+        for vb in sap_het_han[:5]:
+            msg += f"   - {vb['so_hieu']} (còn {vb['ngay_con_lai']} ngày)\n"
+    
+    try:
+        bot.send_message(CHAT_ID, msg, parse_mode='Markdown')
+    except Exception as e:
+        print(f"❌ Lỗi gửi báo cáo: {e}")
 
 # ==================== MAIN ====================
 def main():
@@ -282,15 +292,8 @@ def main():
     
     # Kiểm tra biến môi trường
     if not USER_NAME or not PASS_WORD:
-        print("❌ Thiếu SKHCN_USER hoặc SKHCN_PASS")
+        print("❌ Thiếu tài khoản đăng nhập")
         return
-    if not TOKEN or not CHAT_ID:
-        print("❌ Thiếu TELEGRAM_TOKEN hoặc CHAT_ID")
-        return
-    
-    # Đọc danh sách đã gửi
-    da_gui = load_da_gui()
-    print(f"📁 Đã gửi trước đó: {len(da_gui)} văn bản")
     
     # Đăng nhập
     session = requests.Session()
@@ -298,41 +301,57 @@ def main():
         print("❌ Đăng nhập thất bại")
         return
     
-    # Lấy danh sách văn bản
-    danh_sach = lay_danh_sach_van_ban(session)
-    if not danh_sach:
+    # Quét danh sách văn bản
+    danh_sach_moi_nhat = quet_van_ban_tu_html(session)
+    if not danh_sach_moi_nhat:
         print("📭 Không lấy được dữ liệu")
         return
     
-    print(f"📊 Tổng số văn bản trong view: {len(danh_sach)}")
+    print(f"📊 Tổng số văn bản trong hệ thống: {len(danh_sach_moi_nhat)}")
     
-    # Tìm văn bản mới (chưa gửi)
-    so_hieu_da_co = {vb['so_hieu'] for vb in danh_sach if vb['so_hieu'] in da_gui}
-    van_ban_moi = [vb for vb in danh_sach if vb['so_hieu'] not in da_gui]
+    # Đọc dữ liệu cũ
+    da_gui = load_da_gui()
+    danh_sach_cu = load_danh_sach_chi_tiet()
     
-    if not van_ban_moi:
-        print("✅ Không có văn bản mới")
-        # Vẫn cập nhật thời gian chạy cuối
-        save_da_gui(da_gui)
-        return
-    
-    print(f"🆕 Phát hiện {len(van_ban_moi)} văn bản mới")
+    # Tìm văn bản mới
+    so_hieu_cu = {vb['so_hieu'] for vb in danh_sach_cu}
+    van_ban_moi = [vb for vb in danh_sach_moi_nhat if vb['so_hieu'] not in so_hieu_cu]
     
     # Cập nhật danh sách đã gửi
     for vb in van_ban_moi:
         da_gui.add(vb['so_hieu'])
     
-    # Lưu vào JSON
-    save_da_gui(da_gui)
+    # Lưu toàn bộ dữ liệu
+    save_full_data(da_gui, danh_sach_moi_nhat)
     
-    # Lưu vào Google Sheets (nếu có)
-    sheet = ket_noi_sheets()
-    luu_vao_sheets(sheet, van_ban_moi)
+    # Gửi thông báo nếu có văn bản mới
+    if van_ban_moi:
+        bot = telebot.TeleBot(TOKEN) if TOKEN else None
+        if bot:
+            gui_thong_bao_telegram(van_ban_moi, bot)
+        
+        # Lưu vào Google Sheets nếu có
+        sheet = ket_noi_sheets()
+        if sheet:
+            try:
+                sheet_main = sheet.sheet1
+                for vb in reversed(van_ban_moi):
+                    row = [vb['so_hieu'], vb['ngay'], vb['trich_yeu'], 
+                           vb['co_quan'], vb.get('han_xu_ly', '')]
+                    sheet_main.insert_row(row, 2)
+                    time.sleep(0.5)
+                print(f"✅ Đã lưu {len(van_ban_moi)} văn bản vào Sheets")
+            except Exception as e:
+                print(f"⚠️ Lỗi lưu Sheets: {e}")
     
-    # Gửi thông báo Telegram
-    gui_thong_bao(van_ban_moi)
+    # Gửi báo cáo hàng ngày (8h sáng)
+    now = datetime.now()
+    if now.hour == 8 and now.minute < 30:
+        bot = telebot.TeleBot(TOKEN) if TOKEN else None
+        if bot:
+            gui_bao_cao_hang_ngay(bot, danh_sach_moi_nhat)
     
-    print(f"✅ Hoàn thành! Đã thêm {len(van_ban_moi)} văn bản mới")
+    print(f"✅ Hoàn thành! Thêm {len(van_ban_moi)} văn bản mới")
 
 if __name__ == "__main__":
     main()
