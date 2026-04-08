@@ -1,8 +1,7 @@
 import json
 import os
+import telebot
 from datetime import datetime, timedelta
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 DATA_FILE = "da_guijson"
 
@@ -102,27 +101,21 @@ def bao_cao_ngay(danh_sach):
     chieu = len(loc_theo_khung_gio(ds_hom_nay, "chiều"))
     return f"📊 {ngay_hom_nay}\n☀️ Sáng: {sang}\n🌤️ Chiều: {chieu}\n📌 Tổng: {len(ds_hom_nay)}"
 
-# ========== TELEGRAM HANDLERS ==========
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Chào bạn! Tôi có thể trả lời:\n- thống kê\n- sáng nay\n- hôm nay\n- danh sách hôm nay")
+# ========== TELEGRAM BOT ==========
+TOKEN = os.environ.get("TELEGRAM_TOKEN")
+bot = telebot.TeleBot(TOKEN)
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    reply = xu_ly_cau_hoi(text)
-    await update.message.reply_text(reply)
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    bot.reply_to(message, "Chào bạn! Tôi có thể trả lời:\n- thống kê\n- sáng nay\n- hôm nay\n- danh sách hôm nay")
 
-def main():
-    TOKEN = os.environ.get("TELEGRAM_TOKEN")
-    if not TOKEN:
-        print("❌ Chưa có TELEGRAM_TOKEN")
-        return
-    
-    app = Application.builder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    print("✅ Bot polling đang chạy...")
-    app.run_polling()
+@bot.message_handler(func=lambda message: True)
+def handle_message(message):
+    reply = xu_ly_cau_hoi(message.text)
+    bot.reply_to(message, reply)
 
 if __name__ == "__main__":
-    main()
+    # Xóa webhook trước khi chạy polling
+    bot.remove_webhook()
+    print("✅ Bot polling đang chạy...")
+    bot.infinity_polling()
