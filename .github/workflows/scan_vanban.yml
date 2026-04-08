@@ -2,10 +2,8 @@ name: Quét văn bản đến HSCV
 
 on:
   schedule:
-    # Chạy mỗi 30 phút từ 7h đến 21h hàng ngày (giờ UTC)
-    # Giờ Việt Nam = UTC+7, nên 0-14 UTC tương ứng 7h-21h VN
     - cron: '*/30 0-14 * * *'
-  workflow_dispatch:  # Cho phép chạy thủ công
+  workflow_dispatch:
 
 jobs:
   scan:
