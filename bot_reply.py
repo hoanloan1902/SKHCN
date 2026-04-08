@@ -1,14 +1,10 @@
 import json
-import re
+import os
 from datetime import datetime, timedelta
-from flask import Flask, request
-import requests
-
-app = Flask(__name__)
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 
 DATA_FILE = "da_guijson"
-TOKEN = "YOUR_BOT_TOKEN"  # Sẽ được thay thế bằng biến môi trường
-CHAT_ID = "YOUR_CHAT_ID"
 
 KHUNG_GIO = {
     "sáng": (0, 11),
@@ -106,30 +102,27 @@ def bao_cao_ngay(danh_sach):
     chieu = len(loc_theo_khung_gio(ds_hom_nay, "chiều"))
     return f"📊 {ngay_hom_nay}\n☀️ Sáng: {sang}\n🌤️ Chiều: {chieu}\n📌 Tổng: {len(ds_hom_nay)}"
 
-@app.route('/', methods=['POST'])
-def webhook():
-    data = request.get_json()
-    if data and 'message' in data:
-        chat_id = data['message']['chat']['id']
-        text = data['message'].get('text', '')
-        reply = xu_ly_cau_hoi(text)
-        send_message(chat_id, reply)
-    return 'OK', 200
+# ========== TELEGRAM HANDLERS ==========
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Chào bạn! Tôi có thể trả lời:\n- thống kê\n- sáng nay\n- hôm nay\n- danh sách hôm nay")
 
-@app.route('/')
-def index():
-    return 'Bot is running!'
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text
+    reply = xu_ly_cau_hoi(text)
+    await update.message.reply_text(reply)
 
-def send_message(chat_id, text):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text}
-    try:
-        requests.post(url, json=payload)
-    except Exception as e:
-        print(e)
-
-if __name__ == '__main__':
-    import os
+def main():
     TOKEN = os.environ.get("TELEGRAM_TOKEN")
-    CHAT_ID = os.environ.get("CHAT_ID")
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
+    if not TOKEN:
+        print("❌ Chưa có TELEGRAM_TOKEN")
+        return
+    
+    app = Application.builder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    print("✅ Bot polling đang chạy...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
