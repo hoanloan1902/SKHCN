@@ -15,7 +15,7 @@ import requests
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from bs4 import BeautifulSoup
-import telebot  # ĐÃ THÊM IMPORT NÀY
+import telebot  # Đúng với pyTelegramBotAPI
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
