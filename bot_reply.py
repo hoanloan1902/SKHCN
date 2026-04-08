@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Bot Telegram trả lời tin nhắn thông minh
+Bot Telegram trả lời tin nhắn thông minh - ĐÃ SỬA
 """
 
 import os
@@ -31,36 +31,43 @@ def load_danh_sach_chi_tiet() -> List[Dict]:
     return []
 
 def thong_ke_theo_ngay(ngay: datetime) -> str:
-    """Thống kê văn bản theo ngày cụ thể"""
+    """Thống kê văn bản theo ngày cụ thể - ĐÃ SỬA"""
     danh_sach = load_danh_sach_chi_tiet()
     ngay_str = ngay.strftime('%d/%m/%Y')
     
+    # Lọc theo ngày
     vb_trong_ngay = [vb for vb in danh_sach if vb.get('ngay') == ngay_str]
     
     if not vb_trong_ngay:
         return f"📭 Không có văn bản nào ngày {ngay_str}"
     
+    # Sắp xếp theo số hiệu
     vb_trong_ngay.sort(key=lambda x: x.get('so_hieu', ''))
     
     msg = f"📊 *THỐNG KÊ NGÀY {ngay_str}*\n"
-    msg += f"Tổng số: {len(vb_trong_ngay)} văn bản\n\n"
+    msg += f"📋 Tổng số: *{len(vb_trong_ngay)}* văn bản\n\n"
     
+    # Liệt kê chi tiết
     for i, vb in enumerate(vb_trong_ngay[:15], 1):
         msg += f"{i}. `{vb['so_hieu']}`\n"
         msg += f"   🏢 {vb['co_quan']}\n"
-        msg += f"   📝 {vb['trich_yeu'][:80]}...\n"
+        msg += f"   📅 Ngày đến: {vb['ngay']}\n"
         
+        # Hiển thị hạn xử lý
         if vb.get('han_xu_ly') and vb['han_xu_ly'] != "Không có hạn":
             ngay_con = vb.get('ngay_con_lai', 999)
             if ngay_con < 0:
-                msg += f"   ⚠️ *QUÁ HẠN {abs(ngay_con)} ngày*\n"
+                msg += f"   ⚠️ *QUÁ HẠN {abs(ngay_con)} ngày* (Hạn: {vb['han_xu_ly']})\n"
             elif ngay_con == 0:
-                msg += f"   🔴 *HẾT HẠN HÔM NAY*\n"
+                msg += f"   🔴 *HẾT HẠN HÔM NAY* (Hạn: {vb['han_xu_ly']})\n"
             elif ngay_con <= 3:
-                msg += f"   🟡 *Còn {ngay_con} ngày*\n"
+                msg += f"   🟡 *Còn {ngay_con} ngày* (Hạn: {vb['han_xu_ly']})\n"
             else:
-                msg += f"   📅 Hạn: {vb['han_xu_ly']}\n"
-        msg += "\n"
+                msg += f"   📅 Hạn xử lý: {vb['han_xu_ly']}\n"
+        else:
+            msg += f"   ⚪ Không có hạn xử lý\n"
+        
+        msg += f"   📝 {vb['trich_yeu'][:80]}...\n\n"
     
     if len(vb_trong_ngay) > 15:
         msg += f"... và {len(vb_trong_ngay) - 15} văn bản khác\n"
@@ -68,72 +75,43 @@ def thong_ke_theo_ngay(ngay: datetime) -> str:
     
     return msg
 
-def thong_ke_theo_tuan() -> str:
-    """Thống kê văn bản trong tuần này"""
+def thong_ke_tong_hop() -> str:
+    """Thống kê tổng hợp hệ thống - ĐÃ SỬA"""
     danh_sach = load_danh_sach_chi_tiet()
-    today = datetime.now()
-    start_of_week = today - timedelta(days=today.weekday())
     
-    vb_trong_tuan = []
-    for vb in danh_sach:
+    if not danh_sach:
+        return "📭 Chưa có dữ liệu"
+    
+    # Thống kê theo ngày hôm nay
+    hom_nay_str = datetime.now().strftime('%d/%m/%Y')
+    vb_hom_nay = [vb for vb in danh_sach if vb.get('ngay') == hom_nay_str]
+    
+    # Thống kê theo hạn
+    qua_han = len([vb for vb in danh_sach if vb.get('ngay_con_lai', 999) < 0])
+    het_han_hom_nay = len([vb for vb in danh_sach if vb.get('ngay_con_lai', 999) == 0])
+    sap_het_han = len([vb for vb in danh_sach if 0 < vb.get('ngay_con_lai', 999) <= 3])
+    con_han = len([vb for vb in danh_sach if vb.get('ngay_con_lai', 999) > 3])
+    khong_han = len([vb for vb in danh_sach if vb.get('han_xu_ly', 'Không có hạn') == 'Không có hạn'])
+    
+    last_update = "Chưa cập nhật"
+    if os.path.exists(DA_GUI_FILE):
         try:
-            ngay = datetime.strptime(vb.get('ngay', ''), '%d/%m/%Y')
-            if ngay >= start_of_week:
-                vb_trong_tuan.append(vb)
+            with open(DA_GUI_FILE, 'r') as f:
+                data = json.load(f)
+                last_update = data.get('last_update', 'Chưa cập nhật')
         except:
-            continue
+            pass
     
-    if not vb_trong_tuan:
-        return "📭 Không có văn bản nào trong tuần này"
-    
-    theo_ngay = {}
-    for vb in vb_trong_tuan:
-        ngay = vb.get('ngay', '')
-        if ngay not in theo_ngay:
-            theo_ngay[ngay] = []
-        theo_ngay[ngay].append(vb)
-    
-    msg = f"📊 *THỐNG KÊ TUẦN NÀY*\n"
-    msg += f"Tổng số: {len(vb_trong_tuan)} văn bản\n\n"
-    
-    for ngay in sorted(theo_ngay.keys()):
-        msg += f"📅 *{ngay}*: {len(theo_ngay[ngay])} văn bản\n"
-    
-    return msg
-
-def thong_ke_theo_thang() -> str:
-    """Thống kê văn bản trong tháng này"""
-    danh_sach = load_danh_sach_chi_tiet()
-    current_month = datetime.now().month
-    current_year = datetime.now().year
-    
-    vb_trong_thang = []
-    for vb in danh_sach:
-        try:
-            ngay = datetime.strptime(vb.get('ngay', ''), '%d/%m/%Y')
-            if ngay.month == current_month and ngay.year == current_year:
-                vb_trong_thang.append(vb)
-        except:
-            continue
-    
-    if not vb_trong_thang:
-        return f"📭 Không có văn bản nào trong tháng {current_month}/{current_year}"
-    
-    theo_ngay = {}
-    for vb in vb_trong_thang:
-        ngay = vb.get('ngay', '')
-        if ngay not in theo_ngay:
-            theo_ngay[ngay] = []
-        theo_ngay[ngay].append(vb)
-    
-    msg = f"📊 *THỐNG KÊ THÁNG {current_month}/{current_year}*\n"
-    msg += f"Tổng số: {len(vb_trong_thang)} văn bản\n"
-    msg += f"Số ngày có văn bản: {len(theo_ngay)} ngày\n\n"
-    
-    top_ngay = sorted(theo_ngay.items(), key=lambda x: len(x[1]), reverse=True)[:5]
-    msg += "*Top ngày có nhiều văn bản:*\n"
-    for ngay, list_vb in top_ngay:
-        msg += f"   📅 {ngay}: {len(list_vb)} văn bản\n"
+    msg = f"📊 *THỐNG KÊ HỆ THỐNG HSCV*\n\n"
+    msg += f"📋 Tổng số văn bản đang chờ: *{len(danh_sach)}*\n"
+    msg += f"📅 Văn bản đến hôm nay: *{len(vb_hom_nay)}*\n\n"
+    msg += f"*PHÂN LOẠI THEO HẠN XỬ LÝ:*\n"
+    msg += f"🔴 Quá hạn: {qua_han}\n"
+    msg += f"🔴 Hết hạn hôm nay: {het_han_hom_nay}\n"
+    msg += f"🟡 Sắp hết hạn (≤3 ngày): {sap_het_han}\n"
+    msg += f"🟢 Còn hạn: {con_han}\n"
+    msg += f"⚪ Không có hạn: {khong_han}\n\n"
+    msg += f"🕐 Cập nhật lúc: {last_update[:16] if last_update != 'Chưa cập nhật' else last_update}"
     
     return msg
 
@@ -154,20 +132,21 @@ def danh_sach_sap_het_han() -> str:
         msg += f"🔴 *QUÁ HẠN XỬ LÝ:* {len(qua_han)} văn bản\n"
         for vb in sorted(qua_han, key=lambda x: x.get('ngay_con_lai', 0))[:10]:
             msg += f"   • `{vb['so_hieu']}` - Quá hạn {abs(vb['ngay_con_lai'])} ngày\n"
-            msg += f"     🏢 {vb['co_quan']}\n"
+            msg += f"     📅 Hạn: {vb['han_xu_ly']} | 🏢 {vb['co_quan']}\n"
         msg += "\n"
     
     if het_han_hom_nay:
         msg += f"🔴 *HẾT HẠN HÔM NAY:* {len(het_han_hom_nay)} văn bản\n"
         for vb in het_han_hom_nay[:10]:
             msg += f"   • `{vb['so_hieu']}` - {vb['co_quan']}\n"
+            msg += f"     📅 Hạn: {vb['han_xu_ly']}\n"
         msg += "\n"
     
     if sap_het_han:
         msg += f"🟡 *SẮP HẾT HẠN (3 ngày tới):* {len(sap_het_han)} văn bản\n"
         for vb in sorted(sap_het_han, key=lambda x: x.get('ngay_con_lai', 0))[:10]:
             msg += f"   • `{vb['so_hieu']}` - Còn {vb['ngay_con_lai']} ngày\n"
-            msg += f"     📅 Hạn: {vb['han_xu_ly']}\n"
+            msg += f"     📅 Hạn: {vb['han_xu_ly']} | 🏢 {vb['co_quan']}\n"
     
     return msg
 
@@ -210,7 +189,7 @@ def gui_tat_ca_van_ban(message):
                 warn = ""
             
             msg += f"{emoji} *{vb['so_hieu']}*{warn}\n"
-            msg += f"   📅 {vb['ngay']}"
+            msg += f"   📅 Ngày: {vb['ngay']}"
             if vb.get('han_xu_ly') and vb['han_xu_ly'] != "Không có hạn":
                 msg += f" | ⏰ Hạn: {vb['han_xu_ly']}\n"
             else:
@@ -221,40 +200,6 @@ def gui_tat_ca_van_ban(message):
         bot.send_message(message.chat.id, msg, parse_mode='Markdown')
     
     bot.send_message(message.chat.id, "✅ Đã gửi xong toàn bộ danh sách")
-
-def thong_ke_tong_hop() -> str:
-    """Thống kê tổng hợp hệ thống"""
-    danh_sach = load_danh_sach_chi_tiet()
-    
-    if not danh_sach:
-        return "📭 Chưa có dữ liệu"
-    
-    qua_han = len([vb for vb in danh_sach if vb.get('ngay_con_lai', 999) < 0])
-    het_han_hom_nay = len([vb for vb in danh_sach if vb.get('ngay_con_lai', 999) == 0])
-    sap_het_han = len([vb for vb in danh_sach if 0 < vb.get('ngay_con_lai', 999) <= 3])
-    con_han = len([vb for vb in danh_sach if vb.get('ngay_con_lai', 999) > 3])
-    khong_han = len([vb for vb in danh_sach if vb.get('han_xu_ly', 'Không có hạn') == 'Không có hạn'])
-    
-    last_update = "Chưa cập nhật"
-    if os.path.exists(DA_GUI_FILE):
-        try:
-            with open(DA_GUI_FILE, 'r') as f:
-                data = json.load(f)
-                last_update = data.get('last_update', 'Chưa cập nhật')
-        except:
-            pass
-    
-    msg = f"📊 *THỐNG KÊ HỆ THỐNG HSCV*\n\n"
-    msg += f"📋 Tổng số văn bản đang chờ: *{len(danh_sach)}*\n\n"
-    msg += f"*PHÂN LOẠI THEO HẠN XỬ LÝ:*\n"
-    msg += f"🔴 Quá hạn: {qua_han}\n"
-    msg += f"🔴 Hết hạn hôm nay: {het_han_hom_nay}\n"
-    msg += f"🟡 Sắp hết hạn (≤3 ngày): {sap_het_han}\n"
-    msg += f"🟢 Còn hạn: {con_han}\n"
-    msg += f"⚪ Không có hạn: {khong_han}\n\n"
-    msg += f"🕐 Cập nhật lúc: {last_update[:16] if last_update != 'Chưa cập nhật' else last_update}"
-    
-    return msg
 
 # ==================== TELEGRAM COMMANDS ====================
 @bot.message_handler(commands=['start', 'help'])
@@ -292,9 +237,26 @@ def send_list_all(message):
 def smart_reply(message):
     text = message.text.lower()
     
-    if "bao nhiêu" in text and ("văn bản" in text or "công văn" in text):
-        if "hôm nay" in text:
-            reply = thong_ke_theo_ngay(datetime.now())
+    # Xử lý câu hỏi "có bao nhiêu văn bản đến hôm nay"
+    if ("bao nhiêu" in text or "mấy" in text) and ("văn bản" in text or "công văn" in text):
+        if "hôm nay" in text or "ngày hôm nay" in text or "hn" in text:
+            # Thống kê riêng cho hôm nay
+            danh_sach = load_danh_sach_chi_tiet()
+            hom_nay_str = datetime.now().strftime('%d/%m/%Y')
+            vb_hom_nay = [vb for vb in danh_sach if vb.get('ngay') == hom_nay_str]
+            
+            if vb_hom_nay:
+                reply = f"📊 *Hôm nay ({hom_nay_str}) có {len(vb_hom_nay)} văn bản đến:*\n\n"
+                for vb in vb_hom_nay[:10]:
+                    reply += f"• `{vb['so_hieu']}` - {vb['co_quan']}\n"
+                if len(vb_hom_nay) > 10:
+                    reply += f"\n... và {len(vb_hom_nay) - 10} văn bản khác"
+            else:
+                reply = f"📭 Hôm nay ({hom_nay_str}) chưa có văn bản nào"
+            
+            bot.reply_to(message, reply, parse_mode='Markdown')
+            return
+            
         elif "hôm qua" in text:
             reply = thong_ke_theo_ngay(datetime.now() - timedelta(days=1))
         elif "tuần này" in text:
@@ -312,7 +274,7 @@ def smart_reply(message):
         bot.reply_to(message, reply, parse_mode='Markdown')
         return
     
-    elif "thống kê" in text or "tổng hợp" in text:
+    elif "thống kê" in text or "tổng hợp" in text or "status" in text:
         reply = thong_ke_tong_hop()
         bot.reply_to(message, reply, parse_mode='Markdown')
         return
@@ -320,6 +282,61 @@ def smart_reply(message):
     elif "chào" in text or "hi" in text or "hello" in text:
         bot.reply_to(message, "Xin chào! Tôi là bot quản lý văn bản HSCV. Gõ /help để xem hướng dẫn.")
         return
+
+# Thêm hàm thong_ke_theo_tuan và thong_ke_theo_thang
+def thong_ke_theo_tuan() -> str:
+    danh_sach = load_danh_sach_chi_tiet()
+    today = datetime.now()
+    start_of_week = today - timedelta(days=today.weekday())
+    
+    vb_trong_tuan = []
+    for vb in danh_sach:
+        try:
+            ngay = datetime.strptime(vb.get('ngay', ''), '%d/%m/%Y')
+            if ngay >= start_of_week:
+                vb_trong_tuan.append(vb)
+        except:
+            continue
+    
+    if not vb_trong_tuan:
+        return "📭 Không có văn bản nào trong tuần này"
+    
+    theo_ngay = {}
+    for vb in vb_trong_tuan:
+        ngay = vb.get('ngay', '')
+        if ngay not in theo_ngay:
+            theo_ngay[ngay] = []
+        theo_ngay[ngay].append(vb)
+    
+    msg = f"📊 *THỐNG KÊ TUẦN NÀY*\n"
+    msg += f"Tổng số: {len(vb_trong_tuan)} văn bản\n\n"
+    
+    for ngay in sorted(theo_ngay.keys()):
+        msg += f"📅 *{ngay}*: {len(theo_ngay[ngay])} văn bản\n"
+    
+    return msg
+
+def thong_ke_theo_thang() -> str:
+    danh_sach = load_danh_sach_chi_tiet()
+    current_month = datetime.now().month
+    current_year = datetime.now().year
+    
+    vb_trong_thang = []
+    for vb in danh_sach:
+        try:
+            ngay = datetime.strptime(vb.get('ngay', ''), '%d/%m/%Y')
+            if ngay.month == current_month and ngay.year == current_year:
+                vb_trong_thang.append(vb)
+        except:
+            continue
+    
+    if not vb_trong_thang:
+        return f"📭 Không có văn bản nào trong tháng {current_month}/{current_year}"
+    
+    msg = f"📊 *THỐNG KÊ THÁNG {current_month}/{current_year}*\n"
+    msg += f"Tổng số: {len(vb_trong_thang)} văn bản"
+    
+    return msg
 
 if __name__ == "__main__":
     print("🤖 Bot đang chạy polling mode...")
