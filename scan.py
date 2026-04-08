@@ -15,7 +15,7 @@ import requests
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from bs4 import BeautifulSoup
-import telebot  # Đúng với pyTelegramBotAPI
+import telebot
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -34,6 +34,16 @@ DB_PATH = "/qlvb/vbden.nsf"
 VIEW_NAME = "Private_ChoXL_KoHan"
 
 # ==================== HÀM TIỆN ÍCH ====================
+def escape_markdown(text: str) -> str:
+    """Escape ký tự đặc biệt trong Markdown"""
+    if not text:
+        return ""
+    # Các ký tự cần escape trong Telegram Markdown
+    special_chars = r'_*[]()~`>#+-=|{}.!'
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
+
 def tinh_ngay_con_lai(han_xu_ly: str) -> int:
     """Tính số ngày còn lại đến hạn xử lý"""
     if not han_xu_ly or han_xu_ly == "Không có hạn":
@@ -204,7 +214,7 @@ def quet_van_ban_tu_html(session: requests.Session) -> List[Dict]:
 
 # ==================== GỬI THÔNG BÁO ====================
 def gui_thong_bao_telegram(van_ban_moi: List[Dict], bot_instance):
-    """Gửi thông báo Telegram chi tiết"""
+    """Gửi thông báo Telegram chi tiết - ĐÃ FIX LỖI MARKDOWN"""
     if not van_ban_moi:
         return
     
@@ -216,9 +226,14 @@ def gui_thong_bao_telegram(van_ban_moi: List[Dict], bot_instance):
         msg += f"⚠️ *Cảnh báo:* {len(sap_het_han)} văn bản có hạn xử lý trong 3 ngày tới\n\n"
     
     for i, vb in enumerate(van_ban_moi[:10], 1):
+        # Escape các ký tự đặc biệt
+        so_hieu_escaped = escape_markdown(vb['so_hieu'])
+        co_quan_escaped = escape_markdown(vb['co_quan'])
+        trich_yeu_escaped = escape_markdown(vb['trich_yeu'][:100])
+        
         if vb.get('ngay_con_lai', 999) <= 1:
             emoji = "🔴"
-            warn = f" *HẾT HẠN HÔM NAY!*"
+            warn = f" *HẾT HẠN HÔM NAY\!*"
         elif vb.get('ngay_con_lai', 999) <= 3:
             emoji = "🟡"
             warn = f" *Còn {vb['ngay_con_lai']} ngày*"
@@ -226,24 +241,33 @@ def gui_thong_bao_telegram(van_ban_moi: List[Dict], bot_instance):
             emoji = "📄"
             warn = ""
         
-        msg += f"{emoji} *{vb['so_hieu']}*\n"
+        msg += f"{emoji} *{so_hieu_escaped}*\n"
         msg += f"   📅 Ngày: {vb['ngay']}"
         if vb.get('han_xu_ly') and vb['han_xu_ly'] != "Không có hạn":
-            msg += f" | ⏰ Hạn: {vb['han_xu_ly']}{warn}\n"
+            han_escaped = escape_markdown(vb['han_xu_ly'])
+            msg += f" | ⏰ Hạn: {han_escaped}{warn}\n"
         else:
             msg += f"\n"
-        msg += f"   🏢 {vb['co_quan']}\n"
-        msg += f"   📝 {vb['trich_yeu'][:100]}...\n\n"
+        msg += f"   🏢 {co_quan_escaped}\n"
+        msg += f"   📝 {trich_yeu_escaped}...\n\n"
     
     if len(van_ban_moi) > 10:
         msg += f"... và {len(van_ban_moi) - 10} văn bản khác\n"
-        msg += f"📌 Gửi /list_all để xem toàn bộ"
+        msg += f"📌 Gửi /list\\_all để xem toàn bộ"
     
     try:
-        bot_instance.send_message(CHAT_ID, msg, parse_mode='Markdown')
+        bot_instance.send_message(CHAT_ID, msg, parse_mode='MarkdownV2')
         print(f"✅ Đã gửi Telegram: {len(van_ban_moi)} văn bản")
     except Exception as e:
-        print(f"❌ Lỗi gửi Telegram: {e}")
+        # Nếu lỗi MarkdownV2, thử gửi text thường
+        print(f"⚠️ Lỗi MarkdownV2: {e}, thử gửi text thường...")
+        try:
+            msg_plain = f"🔔 CÓ {len(van_ban_moi)} VĂN BẢN ĐẾN MỚI\n\n"
+            for vb in van_ban_moi[:5]:
+                msg_plain += f"- {vb['so_hieu']} - {vb['co_quan']}\n"
+            bot_instance.send_message(CHAT_ID, msg_plain)
+        except:
+            print(f"❌ Lỗi gửi Telegram text thường")
 
 def gui_bao_cao_hang_ngay(bot_instance, danh_sach: List[Dict]):
     """Gửi báo cáo tổng hợp mỗi ngày lúc 8h sáng"""
@@ -259,22 +283,22 @@ def gui_bao_cao_hang_ngay(bot_instance, danh_sach: List[Dict]):
     if qua_han:
         msg += f"🔴 *QUÁ HẠN:* {len(qua_han)} văn bản\n"
         for vb in qua_han[:5]:
-            msg += f"   - {vb['so_hieu']} (quá hạn {abs(vb['ngay_con_lai'])} ngày)\n"
+            msg += f"   - {escape_markdown(vb['so_hieu'])} (quá hạn {abs(vb['ngay_con_lai'])} ngày)\n"
         msg += "\n"
     
     if hom_nay_het_han:
         msg += f"⚠️ *HẾT HẠN HÔM NAY:* {len(hom_nay_het_han)} văn bản\n"
         for vb in hom_nay_het_han[:5]:
-            msg += f"   - {vb['so_hieu']}\n"
+            msg += f"   - {escape_markdown(vb['so_hieu'])}\n"
         msg += "\n"
     
     if sap_het_han:
         msg += f"🟡 *SẮP HẾT HẠN (3 ngày tới):* {len(sap_het_han)} văn bản\n"
         for vb in sap_het_han[:5]:
-            msg += f"   - {vb['so_hieu']} (còn {vb['ngay_con_lai']} ngày)\n"
+            msg += f"   - {escape_markdown(vb['so_hieu'])} (còn {vb['ngay_con_lai']} ngày)\n"
     
     try:
-        bot_instance.send_message(CHAT_ID, msg, parse_mode='Markdown')
+        bot_instance.send_message(CHAT_ID, msg, parse_mode='MarkdownV2')
     except Exception as e:
         print(f"❌ Lỗi gửi báo cáo: {e}")
 
