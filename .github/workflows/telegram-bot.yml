@@ -1,0 +1,32 @@
+name: Telegram Bot
+
+on:
+  repository_dispatch:
+    types: [telegram-webhook]
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      
+      - run: pip install pandas openpyxl PyPDF2 requests
+      
+      - name: Run bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TELEGRAM_UPDATE: ${{ github.event.client_payload.update }}
+        run: python bot.py
+      
+      - name: Commit Excel changes
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add van_ban.xlsx
+          git diff --quiet && git diff --staged --quiet || git commit -m "Update van_ban.xlsx"
+          git push
