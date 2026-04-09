@@ -2,22 +2,36 @@ import os
 import re
 import json
 import requests
-import pandas as pd
-from datetime import datetime, timedelta
-from pathlib import Path
+from datetime import datetime
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 import PyPDF2
 from io import BytesIO
 
 # ============ CẤU HÌNH ============
-EXCEL_FILE = "van_ban.xlsx"
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# Google Sheets - Tên file là "VanBan"
+SHEET_NAME = "VanBan"
+SERVICE_ACCOUNT = json.loads(os.getenv("GSPREAD_SERVICE_ACCOUNT"))
+
+# ============ KẾT NỐI GOOGLE SHEETS ============
+scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+creds = ServiceAccountCredentials.from_json_keyfile_dict(SERVICE_ACCOUNT, scope)
+client = gspread.authorize(creds)
+
+# Mở sheet "VanBan" và lấy 2 worksheet
+spreadsheet = client.open(SHEET_NAME)
+sheet_den = spreadsheet.worksheet("VB_Den")
+sheet_di = spreadsheet.worksheet("VB_Di")
+
+# ============ HÀM GỬI TIN NHẮN TELEGRAM ============
 def gui_telegram(noi_dung):
     """Gửi tin nhắn qua Telegram"""
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
-        "chat_id": CHAT_ID,
+        "chat_id": TELEGRAM_CHAT_ID,
         "text": noi_dung,
         "parse_mode": "HTML"
     }
@@ -26,262 +40,346 @@ def gui_telegram(noi_dung):
     except Exception as e:
         print(f"Lỗi gửi Telegram: {e}")
 
+# ============ ĐỌC NỘI DUNG PDF ============
 def doc_noi_dung_pdf(url_pdf):
-    """Đọc PDF từ URL (file gửi qua Telegram)"""
+    """Đọc nội dung từ file PDF qua URL"""
     try:
         response = requests.get(url_pdf, timeout=30)
         pdf_file = BytesIO(response.content)
         reader = PyPDF2.PdfReader(pdf_file)
         noi_dung = ""
         for page in reader.pages:
-            noi_dung += page.extract_text()
+            text = page.extract_text()
+            if text:
+                noi_dung += text
         return noi_dung
     except Exception as e:
-        return f""
+        print(f"Lỗi đọc PDF: {e}")
+        return ""
 
-def trich_xuat_van_ban(noi_dung, loai="den"):
-    """Trích xuất thông tin từ nội dung"""
-    ket_qua = {"so_hieu": "", "trich_yeu": "", "han_xu_ly": None, "noi_nhan": ""}
+# ============ TRÍCH XUẤT THÔNG TIN ============
+def trich_xuat_thong_tin(noi_dung, loai="den"):
+    """Trích xuất số hiệu, trích yếu, hạn xử lý, nơi nhận"""
+    ket_qua = {
+        "so_hieu": "",
+        "trich_yeu": "",
+        "han_xu_ly": None,
+        "noi_nhan": ""
+    }
     
-    # Tìm số hiệu
-    match = re.search(r'(\d+/[A-Z0-9\-\/]+)', noi_dung)
-    if match:
-        ket_qua["so_hieu"] = match.group(1)
+    # Tìm số hiệu (VD: 123/QĐ-UBND, 456/CV-STP)
+    match_sh = re.search(r'(\d+/[A-Z0-9\-\/]+)', noi_dung)
+    if match_sh:
+        ket_qua["so_hieu"] = match_sh.group(1)
     
     # Tìm trích yếu
-    match = re.search(r'(?:Trích yếu|V/v|Về việc)[:\s]+([^\n]{10,200})', noi_dung, re.IGNORECASE)
-    if match:
-        ket_qua["trich_yeu"] = match.group(1).strip()
+    patterns_ty = [
+        r'(?:Trích yếu|V/v|Về việc)[:\s]+([^\n]{10,200})',
+        r'(?:Nội dung|Công văn về)[:\s]+([^\n]{10,200})'
+    ]
+    for pattern in patterns_ty:
+        match_ty = re.search(pattern, noi_dung, re.IGNORECASE)
+        if match_ty:
+            ket_qua["trich_yeu"] = match_ty.group(1).strip()[:150]
+            break
     
-    # Tìm hạn (cho văn bản đến)
+    # Tìm hạn xử lý (chỉ văn bản đến)
     if loai == "den":
-        patterns = [
+        han_patterns = [
             r'(?:hạn|hạn xử lý|thời hạn|deadline|chậm nhất|trước ngày)[:\s]*(\d{1,2}[/-]\d{1,2}[/-]\d{4})',
             r'ngày\s+(\d{1,2})\s+tháng\s+(\d{1,2})\s+năm\s+(\d{4})'
         ]
-        for pattern in patterns:
-            match = re.search(pattern, noi_dung, re.IGNORECASE)
-            if match:
-                if len(match.groups()) == 3:
-                    ngay = match.group(1).zfill(2)
-                    thang = match.group(2).zfill(2)
-                    nam = match.group(3)
+        for pattern in han_patterns:
+            match_han = re.search(pattern, noi_dung, re.IGNORECASE)
+            if match_han:
+                if len(match_han.groups()) == 3 and match_han.group(2):
+                    ngay = match_han.group(1).zfill(2)
+                    thang = match_han.group(2).zfill(2)
+                    nam = match_han.group(3)
                     ket_qua["han_xu_ly"] = f"{ngay}/{thang}/{nam}"
                 else:
-                    ket_qua["han_xu_ly"] = match.group(1).replace('-', '/')
+                    ket_qua["han_xu_ly"] = match_han.group(1).replace('-', '/')
                 break
     
-    # Tìm nơi nhận (cho văn bản đi)
+    # Tìm nơi nhận (văn bản đi)
     if loai == "di":
-        match = re.search(r'(?:Gửi|Đến|Kính gửi)[:\s]+([^\n]+)', noi_dung, re.IGNORECASE)
-        if match:
-            ket_qua["noi_nhan"] = match.group(1).strip()
+        match_noi_nhan = re.search(r'(?:Gửi|Đến|Kính gửi)[:\s]+([^\n]+)', noi_dung, re.IGNORECASE)
+        if match_noi_nhan:
+            ket_qua["noi_nhan"] = match_noi_nhan.group(1).strip()
     
     return ket_qua
 
-def them_van_ban(noi_dung_pdf, loai="den"):
-    """Thêm văn bản vào Excel"""
-    # Đọc file Excel hiện tại
-    if not os.path.exists(EXCEL_FILE):
-        khoi_tao_excel()
-    
-    df_den = pd.read_excel(EXCEL_FILE, sheet_name='VB_Den')
-    df_di = pd.read_excel(EXCEL_FILE, sheet_name='VB_Di')
+# ============ TÍNH NGÀY CÒN LẠI ============
+def tinh_ngay_con_lai(han_xu_ly):
+    """Tính số ngày còn lại đến hạn"""
+    if not han_xu_ly or han_xu_ly == "Không có hạn":
+        return ""
+    try:
+        ngay_han = datetime.strptime(han_xu_ly, '%d/%m/%Y')
+        con_lai = (ngay_han - datetime.now()).days
+        return con_lai if con_lai >= 0 else 0
+    except:
+        return ""
+
+# ============ THÊM VĂN BẢN ============
+def them_van_ban_den(noi_dung_pdf, file_url=""):
+    """Thêm văn bản đến vào Google Sheet"""
     
     # Trích xuất thông tin
-    thong_tin = trich_xuat_van_ban(noi_dung_pdf, loai)
+    info = trich_xuat_thong_tin(noi_dung_pdf, "den")
     
-    if not thong_tin["so_hieu"]:
-        return f"❌ Không tìm thấy số hiệu trong văn bản {loai}"
+    if not info["so_hieu"]:
+        return "❌ Không tìm thấy số hiệu trong văn bản"
     
-    # Kiểm tra trùng
-    if loai == "den":
-        if thong_tin["so_hieu"] in df_den['So_hieu'].values:
-            return f"⚠️ Văn bản {thong_tin['so_hieu']} đã tồn tại"
-        
-        # Tính số ngày còn lại
-        con_lai = ""
-        if thong_tin["han_xu_ly"]:
-            try:
-                ngay_han = datetime.strptime(thong_tin["han_xu_ly"], '%d/%m/%Y')
-                con_lai = (ngay_han - datetime.now()).days
-            except:
-                con_lai = ""
-        
-        # Thêm mới
-        dong_moi = {
-            'ID': len(df_den) + 1,
-            'So_hieu': thong_tin["so_hieu"],
-            'Ngay_den': datetime.now().strftime('%d/%m/%Y'),
-            'Trich_yeu': thong_tin["trich_yeu"][:150],
-            'Han_xu_ly': thong_tin["han_xu_ly"] or "Không có hạn",
-            'Con_lai_ngay': con_lai if con_lai != "" else "",
-            'File_PDF': "",
-            'File_kem': "",
-            'Ngay_nhap': datetime.now().strftime('%d/%m/%Y %H:%M')
-        }
-        df_den = pd.concat([df_den, pd.DataFrame([dong_moi])], ignore_index=True)
-        
-        # Ghi lại Excel
-        with pd.ExcelWriter(EXCEL_FILE, engine='openpyxl') as writer:
-            df_den.to_excel(writer, sheet_name='VB_Den', index=False)
-            df_di.to_excel(writer, sheet_name='VB_Di', index=False)
-        
-        # Tạo thông báo
-        tb = f"✅ Đã thêm văn bản ĐẾN: {thong_tin['so_hieu']}\n"
-        tb += f"📝 {thong_tin['trich_yeu'][:100]}\n"
-        if thong_tin["han_xu_ly"]:
-            tb += f"⏰ Hạn xử lý: {thong_tin['han_xu_ly']} (còn {con_lai} ngày)"
-        else:
-            tb += f"📅 Không có hạn xử lý"
-        return tb
+    # Kiểm tra trùng lặp
+    try:
+        existing = sheet_den.col_values(2)  # Cột B (Số hiệu)
+        if info["so_hieu"] in existing:
+            return f"⚠️ Văn bản {info['so_hieu']} đã tồn tại trong sheet VB_Den"
+    except:
+        pass
     
-    else:  # Văn bản đi
-        if thong_tin["so_hieu"] in df_di['So_hieu'].values:
-            return f"⚠️ Văn bản {thong_tin['so_hieu']} đã tồn tại"
-        
-        dong_moi = {
-            'ID': len(df_di) + 1,
-            'So_hieu': thong_tin["so_hieu"],
-            'Ngay_di': datetime.now().strftime('%d/%m/%Y'),
-            'Trich_yeu': thong_tin["trich_yeu"][:150],
-            'Noi_nhan': thong_tin["noi_nhan"],
-            'File_PDF': "",
-            'File_kem': "",
-            'Ngay_nhap': datetime.now().strftime('%d/%m/%Y %H:%M')
-        }
-        df_di = pd.concat([df_di, pd.DataFrame([dong_moi])], ignore_index=True)
-        
-        with pd.ExcelWriter(EXCEL_FILE, engine='openpyxl') as writer:
-            df_den.to_excel(writer, sheet_name='VB_Den', index=False)
-            df_di.to_excel(writer, sheet_name='VB_Di', index=False)
-        
-        tb = f"✅ Đã thêm văn bản ĐI: {thong_tin['so_hieu']}\n"
-        tb += f"📝 {thong_tin['trich_yeu'][:100]}\n"
-        if thong_tin["noi_nhan"]:
-            tb += f"📬 Gửi: {thong_tin['noi_nhan']}"
-        return tb
+    # Tính số ngày còn lại
+    con_lai = tinh_ngay_con_lai(info["han_xu_ly"])
+    
+    # Lấy ID mới
+    try:
+        all_rows = sheet_den.get_all_values()
+        new_id = len(all_rows) if len(all_rows) > 1 else 1
+    except:
+        new_id = 1
+    
+    # Thêm dòng mới
+    dong_moi = [
+        new_id,                                    # ID
+        info["so_hieu"],                          # Số hiệu
+        datetime.now().strftime('%d/%m/%Y'),      # Ngày đến
+        info["trich_yeu"],                        # Trích yếu
+        info["han_xu_ly"] or "Không có hạn",      # Hạn xử lý
+        str(con_lai) if con_lai != "" else "",    # Còn lại (ngày)
+        file_url,                                 # File PDF
+        "",                                       # File kèm
+        datetime.now().strftime('%d/%m/%Y %H:%M') # Ngày nhập
+    ]
+    
+    sheet_den.append_row(dong_moi)
+    
+    # Tạo thông báo
+    tb = f"✅ Đã thêm văn bản ĐẾN: {info['so_hieu']}\n"
+    tb += f"📝 {info['trich_yeu'][:100]}\n"
+    if info["han_xu_ly"]:
+        tb += f"⏰ Hạn xử lý: {info['han_xu_ly']} (còn {con_lai} ngày)"
+    else:
+        tb += f"📅 Không có hạn xử lý"
+    return tb
 
+def them_van_ban_di(noi_dung_pdf, file_url=""):
+    """Thêm văn bản đi vào Google Sheet"""
+    
+    # Trích xuất thông tin
+    info = trich_xuat_thong_tin(noi_dung_pdf, "di")
+    
+    if not info["so_hieu"]:
+        return "❌ Không tìm thấy số hiệu trong văn bản"
+    
+    # Kiểm tra trùng lặp
+    try:
+        existing = sheet_di.col_values(2)  # Cột B (Số hiệu)
+        if info["so_hieu"] in existing:
+            return f"⚠️ Văn bản {info['so_hieu']} đã tồn tại trong sheet VB_Di"
+    except:
+        pass
+    
+    # Lấy ID mới
+    try:
+        all_rows = sheet_di.get_all_values()
+        new_id = len(all_rows) if len(all_rows) > 1 else 1
+    except:
+        new_id = 1
+    
+    # Thêm dòng mới
+    dong_moi = [
+        new_id,                                    # ID
+        info["so_hieu"],                          # Số hiệu
+        datetime.now().strftime('%d/%m/%Y'),      # Ngày đi
+        info["trich_yeu"],                        # Trích yếu
+        info["noi_nhan"],                         # Nơi nhận
+        file_url,                                 # File PDF
+        "",                                       # File kèm
+        datetime.now().strftime('%d/%m/%Y %H:%M') # Ngày nhập
+    ]
+    
+    sheet_di.append_row(dong_moi)
+    
+    # Tạo thông báo
+    tb = f"✅ Đã thêm văn bản ĐI: {info['so_hieu']}\n"
+    tb += f"📝 {info['trich_yeu'][:100]}\n"
+    if info["noi_nhan"]:
+        tb += f"📬 Nơi nhận: {info['noi_nhan']}"
+    return tb
+
+# ============ TRUY VẤN ============
 def tra_cuu(cau_hoi):
-    """Xử lý câu hỏi tự nhiên"""
-    cau_hoi = cau_hoi.lower()
-    df_den = pd.read_excel(EXCEL_FILE, sheet_name='VB_Den')
-    df_di = pd.read_excel(EXCEL_FILE, sheet_name='VB_Di')
+    """Xử lý câu hỏi từ người dùng"""
+    cau_hoi = cau_hoi.lower().strip()
     
-    # Tổng số văn bản đến
+    # Lấy tất cả dữ liệu từ sheet VB_Den
+    try:
+        data_den = sheet_den.get_all_values()
+        if len(data_den) > 1:
+            data_den = data_den[1:]  # Bỏ header
+        else:
+            data_den = []
+    except:
+        data_den = []
+    
+    # 1. Tổng số văn bản đến
     if "bao nhiêu" in cau_hoi and ("vb đến" in cau_hoi or "văn bản đến" in cau_hoi):
-        return f"📊 Tổng số văn bản đến: {len(df_den)}"
+        return f"📊 Tổng số văn bản đến: {len(data_den)}"
     
-    # Hôm nay
+    # 2. Hôm nay có bao nhiêu
     if "hôm nay" in cau_hoi:
         hom_nay = datetime.now().strftime('%d/%m/%Y')
-        sl = len(df_den[df_den['Ngay_den'] == hom_nay])
-        return f"📅 Hôm nay ({hom_nay}) có {sl} văn bản đến"
+        count = sum(1 for row in data_den if len(row) > 2 and row[2] == hom_nay)
+        return f"📅 Hôm nay ({hom_nay}) có {count} văn bản đến"
     
-    # Văn bản có hạn
-    if "có hạn" in cau_hoi:
-        vb_han = df_den[df_den['Han_xu_ly'] != "Không có hạn"]
-        if len(vb_han) == 0:
+    # 3. Văn bản có hạn
+    if "có hạn" in cau_hoi and "không" not in cau_hoi:
+        vb_han = [row for row in data_den if len(row) > 4 and row[4] != "Không có hạn"]
+        if not vb_han:
             return "📭 Không có văn bản nào có hạn xử lý"
         
         ket_qua = f"📋 Có {len(vb_han)} văn bản có hạn:\n\n"
-        for _, row in vb_han.head(10).iterrows():
-            ket_qua += f"📄 {row['So_hieu']} - Hạn: {row['Han_xu_ly']}\n"
-            ket_qua += f"   {row['Trich_yeu'][:60]}\n\n"
+        for row in vb_han[:10]:
+            ket_qua += f"📄 {row[1]} - Hạn: {row[4]}\n"
+            ket_qua += f"   {row[3][:60]}\n\n"
         return ket_qua
     
-    # Sắp hết hạn
+    # 4. Văn bản sắp hết hạn (còn <= 5 ngày)
     if "sắp hết hạn" in cau_hoi or "gần hết hạn" in cau_hoi:
-        vb_han = df_den[df_den['Han_xu_ly'] != "Không có hạn"].copy()
-        vb_han['Con_lai_ngay'] = pd.to_numeric(vb_han['Con_lai_ngay'], errors='coerce')
-        vb_sap_het = vb_han[vb_han['Con_lai_ngay'] <= 5].sort_values('Con_lai_ngay')
+        vb_sap_het = []
+        for row in data_den:
+            if len(row) > 5 and row[5] and str(row[5]).replace('-', '').isdigit():
+                try:
+                    con_lai = int(row[5])
+                    if con_lai <= 5 and con_lai >= 0:
+                        vb_sap_het.append(row)
+                except:
+                    pass
         
-        if len(vb_sap_het) == 0:
+        if not vb_sap_het:
             return "🎉 Không có văn bản nào sắp hết hạn trong 5 ngày tới"
         
         ket_qua = f"⚠️ {len(vb_sap_het)} văn bản sắp hết hạn:\n\n"
-        for _, row in vb_sap_het.iterrows():
-            ket_qua += f"🔴 {row['So_hieu']} - Còn {int(row['Con_lai_ngay'])} ngày\n"
-            ket_qua += f"   Hạn: {row['Han_xu_ly']}\n\n"
+        for row in vb_sap_het[:10]:
+            ket_qua += f"🔴 {row[1]} - Còn {row[5]} ngày\n"
+            ket_qua += f"   Hạn: {row[4]}\n\n"
         return ket_qua
     
-    # Tìm kiếm
+    # 5. Tìm kiếm
     if "tìm" in cau_hoi or "tra" in cau_hoi:
         tu_khoa = re.sub(r'(tìm|tra|kiếm|văn bản|công văn|số)', '', cau_hoi).strip()
         
-        ket_qua_den = df_den[df_den['So_hieu'].str.contains(tu_khoa, case=False, na=False) | 
-                             df_den['Trich_yeu'].str.contains(tu_khoa, case=False, na=False)]
+        # Tìm trong VB_Den
+        ket_qua_den = []
+        for row in data_den:
+            if len(row) > 1 and (tu_khoa in row[1].lower() or tu_khoa in row[3].lower()):
+                ket_qua_den.append(row)
         
-        if len(ket_qua_den) == 0:
+        if ket_qua_den:
+            ket_qua = f"🔍 Tìm thấy {len(ket_qua_den)} văn bản:\n\n"
+            for row in ket_qua_den[:5]:
+                ket_qua += f"📄 {row[1]} - {row[2]}\n"
+                ket_qua += f"   {row[3][:60]}\n\n"
+            return ket_qua
+        else:
             return f"🔍 Không tìm thấy văn bản nào về '{tu_khoa}'"
-        
-        ket_qua = f"🔍 Tìm thấy {len(ket_qua_den)} văn bản:\n\n"
-        for _, row in ket_qua_den.head(5).iterrows():
-            ket_qua += f"📄 {row['So_hieu']} - {row['Ngay_den']}\n"
-            ket_qua += f"   {row['Trich_yeu'][:60]}\n\n"
-        return ket_qua
     
-    return "❓ Hãy hỏi: 'có bao nhiêu vb đến?', 'hôm nay?', 'văn bản có hạn?', 'tìm 123'"
-
-def khoi_tao_excel():
-    """Tạo file Excel mới"""
-    with pd.ExcelWriter(EXCEL_FILE, engine='openpyxl') as writer:
-        df_den = pd.DataFrame(columns=[
-            'ID', 'So_hieu', 'Ngay_den', 'Trich_yeu', 
-            'Han_xu_ly', 'Con_lai_ngay', 'File_PDF', 'File_kem', 'Ngay_nhap'
-        ])
-        df_di = pd.DataFrame(columns=[
-            'ID', 'So_hieu', 'Ngay_di', 'Trich_yeu', 
-            'Noi_nhan', 'File_PDF', 'File_kem', 'Ngay_nhap'
-        ])
-        df_den.to_excel(writer, sheet_name='VB_Den', index=False)
-        df_di.to_excel(writer, sheet_name='VB_Di', index=False)
+    # 6. Thống kê theo tháng
+    if "tháng" in cau_hoi:
+        match_thang = re.search(r'tháng\s+(\d+)', cau_hoi)
+        if match_thang:
+            thang = match_thang.group(1).zfill(2)
+            nam = datetime.now().year
+            count = 0
+            for row in data_den:
+                if len(row) > 2 and f"/{thang}/{nam}" in row[2]:
+                    count += 1
+            return f"📊 Tháng {thang}/{nam} có {count} văn bản đến"
+    
+    # 7. Danh sách văn bản đi (nếu hỏi)
+    if "văn bản đi" in cau_hoi and "bao nhiêu" in cau_hoi:
+        try:
+            data_di = sheet_di.get_all_values()
+            count = len(data_di) - 1 if len(data_di) > 1 else 0
+            return f"📊 Tổng số văn bản đi: {count}"
+        except:
+            return "📊 Tổng số văn bản đi: 0"
+    
+    return """❓ Hãy thử hỏi:
+- Có bao nhiêu văn bản đến?
+- Hôm nay có mấy văn bản?
+- Văn bản nào có hạn?
+- Văn bản nào sắp hết hạn?
+- Tìm 123/QĐ
+- Thống kê tháng 3"""
 
 # ============ MAIN ============
 def main():
     """Xử lý webhook từ Telegram"""
-    # Lấy dữ liệu từ webhook (đọc từ stdin hoặc biến môi trường)
     update = json.loads(os.getenv("TELEGRAM_UPDATE", "{}"))
     
     if not update:
-        print("Không có dữ liệu")
+        print("Không có dữ liệu webhook")
         return
     
-    # Lấy tin nhắn
     message = update.get("message", {})
-    text = message.get("text", "")
-    chat_id = message.get("chat", {}).get("id")
+    if not message:
+        print("Không có tin nhắn")
+        return
     
-    # Lấy file nếu có
+    text = message.get("text", "")
+    
+    # Xử lý file PDF nếu có
     document = message.get("document")
     file_url = None
+    
     if document:
         file_id = document.get("file_id")
-        # Lấy file từ Telegram
-        url_get_file = f"https://api.telegram.org/bot{TOKEN}/getFile?file_id={file_id}"
-        resp = requests.get(url_get_file).json()
-        if resp.get("ok"):
-            file_path = resp["result"]["file_path"]
-            file_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_path}"
+        file_name = document.get("file_name", "")
+        
+        # Chỉ xử lý file PDF
+        if file_name.lower().endswith('.pdf'):
+            url_get_file = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile?file_id={file_id}"
+            resp = requests.get(url_get_file).json()
+            
+            if resp.get("ok"):
+                file_path = resp["result"]["file_path"]
+                file_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{file_path}"
     
-    # Xử lý
+    # Xử lý nội dung
     if text and file_url:
-        # Có file PDF đính kèm
+        # Có file PDF kèm theo
         noi_dung_pdf = doc_noi_dung_pdf(file_url)
+        
         if "thêm đến" in text.lower() or "them den" in text.lower():
-            ket_qua = them_van_ban(noi_dung_pdf, "den")
+            ket_qua = them_van_ban_den(noi_dung_pdf, file_url)
         elif "thêm đi" in text.lower() or "them di" in text.lower():
-            ket_qua = them_van_ban(noi_dung_pdf, "di")
+            ket_qua = them_van_ban_di(noi_dung_pdf, file_url)
         else:
-            ket_qua = "❓ Vui lòng gõ 'thêm đến' hoặc 'thêm đi' kèm file PDF"
+            ket_qua = "❌ Vui lòng gõ 'thêm đến' hoặc 'thêm đi' kèm file PDF"
+    
     elif text:
         # Câu hỏi bình thường
         ket_qua = tra_cuu(text)
-    else:
-        ket_qua = "📌 Gửi file PDF kèm lệnh 'thêm đến' hoặc hỏi 'có bao nhiêu văn bản đến?'"
     
-    # Gửi kết quả
+    else:
+        ket_qua = "📌 Gửi file PDF kèm lệnh 'thêm đến' hoặc 'thêm đi'\nHoặc hỏi: 'có bao nhiêu văn bản đến?'"
+    
+    # Gửi kết quả về Telegram
     gui_telegram(ket_qua)
+    print(f"Đã gửi phản hồi: {ket_qua[:100]}...")
 
+# ============ CHẠY ============
 if __name__ == "__main__":
     main()
