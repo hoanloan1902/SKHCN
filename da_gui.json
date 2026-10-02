@@ -1,22 +1,3 @@
 {
-  "danh_sach_vb": [
-    {
-      "so_hieu": "533/UBND-VHXH",
-      "ngay_den": "07/04/2026",
-      "gio_den": "09:15",
-      "trich_yeu": "Đề nghị thẩm định đề án xã Mường Nhé"
-    },
-    {
-      "so_hieu": "726/QĐ-UBND",
-      "ngay_den": "07/04/2026",
-      "gio_den": "14:30",
-      "trich_yeu": "Công bố TTHC lĩnh vực chăn nuôi"
-    },
-    {
-      "so_hieu": "2309/UBND-PVHCC",
-      "ngay_den": "30/03/2026",
-      "gio_den": "15:01",
-      "trich_yeu": "Triển khai QĐ 1908/QĐ-BKHCN"
-    }
-  ]
+  "danh_sach_vb": []
 }
