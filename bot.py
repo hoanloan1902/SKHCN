@@ -380,6 +380,6 @@ def main():
     gui_telegram(ket_qua)
     print(f"Đã gửi phản hồi: {ket_qua[:100]}...")
 
-# ============ CHẠY ============
+# ============ CHẠY ============ 
 if __name__ == "__main__":
     main()
