@@ -293,7 +293,7 @@ def main():
     else:
         ket_qua = "📌 Gửi file PDF kèm lệnh 'thêm đến' hoặc hỏi 'có bao nhiêu văn bản đến?'"
     
-    gui_telegram(ket_qua)
+    gui_telegram(ket_qua) 
 
 if __name__ == "__main__":
     main()
